@@ -12,8 +12,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from dotenv import load_dotenv
 load_dotenv(".env")
 
-from backend.api.config import settings
-from backend.api.routers import auth, billing, modules, users, health
+from api.config import settings
+from api.routers import auth, billing, modules, users, health
 
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
