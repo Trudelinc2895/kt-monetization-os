@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from dotenv import load_dotenv
 load_dotenv(".env")
-from backend.api.config import settings
+from api.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
