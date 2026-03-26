@@ -13,7 +13,7 @@ load_dotenv(".env")
 
 from api.config import settings
 from api.database import engine, Base
-from api.routers import auth, billing, modules, users, health
+from api.routers import auth, billing, modules, users, health, mobile
 # Import models so Base knows about them before create_all
 import api.models  # noqa: F401
 
@@ -71,3 +71,4 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(billing.router, prefix="/api/v1/billing", tags=["billing"])
 app.include_router(modules.router, prefix="/api/v1/modules", tags=["modules"])
+app.include_router(mobile.router, prefix="/api/v1", tags=["mobile"])
