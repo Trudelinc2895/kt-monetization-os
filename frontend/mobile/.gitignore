@@ -1,0 +1,15 @@
+# KT Mobile — React Native + Expo
+# Ignore build artifacts and secrets
+node_modules/
+.expo/
+dist/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+.env
+.env.local

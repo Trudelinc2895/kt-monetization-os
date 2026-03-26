@@ -56,6 +56,12 @@ class User(Base):
     audit_logs: Mapped[list[AuditLog]] = relationship(
         "AuditLog", back_populates="user", lazy="noload"
     )
+    device_sessions: Mapped[list[DeviceSession]] = relationship(
+        "DeviceSession", back_populates="user", lazy="noload"
+    )
+    notifications: Mapped[list[UserNotification]] = relationship(
+        "UserNotification", back_populates="user", lazy="noload"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email} plan={self.plan}>"
