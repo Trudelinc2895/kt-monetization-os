@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PRICE_PRO_MONTHLY_ID: str = ""
+    STRIPE_PRICE_PRO_YEARLY_ID: str = ""
     STRIPE_PRICE_BUSINESS_MONTHLY_ID: str = ""
+    STRIPE_PRICE_BUSINESS_YEARLY_ID: str = ""
+    STRIPE_CREDIT_PRICE_ID: str = ""          # one-time payment price for credit packs
+    STRIPE_CREDIT_PACK_SIZE: int = 100         # credits per pack
     STRIPE_CHECKOUT_SUCCESS_URL: str = "https://tkverse.ca/dashboard?checkout=success"
     STRIPE_CHECKOUT_CANCEL_URL: str = "https://tkverse.ca/#pricing"
     STRIPE_PORTAL_RETURN_URL: str = "https://tkverse.ca/dashboard"
