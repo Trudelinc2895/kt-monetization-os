@@ -4,6 +4,7 @@ version: "3.9"
 
 services:
 
+  # ── REVERSE PROXY ──────────────────────────────────────────────────────────
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
@@ -11,18 +12,17 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-      - "127.0.0.1:8020:8020"
-      - "127.0.0.1:9091:9091"
-    environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
     depends_on: [web, admin, api]
     networks: [kt-net]
 
+  # ── FRONTEND ───────────────────────────────────────────────────────────────
   web:
     build: {context: .., dockerfile: infra/docker/web.Dockerfile}
     restart: unless-stopped
@@ -43,6 +43,7 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     networks: [kt-net]
 
+  # ── BACKEND ────────────────────────────────────────────────────────────────
   api:
     build: {context: .., dockerfile: infra/docker/api.Dockerfile}
     restart: unless-stopped
@@ -66,6 +67,7 @@ services:
     depends_on: [redis]
     networks: [kt-net]
 
+  # ── DATABASES ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -76,7 +78,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -89,16 +91,40 @@ services:
     command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --appendonly yes
     volumes: [redis_data:/data]
     healthcheck:
-      test: ["CMD","redis-cli","ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
     networks: [kt-net]
 
+  # ── MONITORING ─────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     restart: unless-stopped
     expose: ["9090"]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on: [node-exporter, postgres-exporter, redis-exporter]
+    networks: [kt-net]
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: unless-stopped
+    expose: ["9093"]
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
     networks: [kt-net]
 
   grafana:
@@ -106,12 +132,52 @@ services:
     restart: unless-stopped
     expose: ["3030"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_HTTP_PORT: "3030"
       GF_SERVER_ROOT_URL: https://monitor.${DOMAIN}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on: [prometheus]
+    networks: [kt-net]
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    expose: ["9100"]
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks: [kt-net]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    expose: ["9187"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    depends_on: [postgres]
+    networks: [kt-net]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    restart: unless-stopped
+    expose: ["9121"]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+    depends_on: [redis]
     networks: [kt-net]
 
 volumes:
@@ -120,6 +186,8 @@ volumes:
   caddy_data:
   caddy_config:
   grafana_data:
+  prometheus_data:
+  alertmanager_data:
 
 networks:
   kt-net:
