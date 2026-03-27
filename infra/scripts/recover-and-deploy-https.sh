@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # KT Monetization OS — Recovery + HTTPS Deploy Script
-# Run this ONCE after VPS recovery to restore everything
+# Run ONCE after VPS recovery to restore everything
 # Usage: bash /opt/kt-monetization-os/infra/scripts/recover-and-deploy-https.sh
 # ============================================================
 set -e
@@ -12,16 +12,16 @@ echo "════════════════════════�
 echo "  KT Recovery + HTTPS Deploy"
 echo "══════════════════════════════════════════"
 
-# ── STEP 1: Kill nftables (was causing SSH lockout) ──────────
-echo "[1/7] Removing nftables..."
+# ── STEP 1: Kill nftables permanently ───────────────────────
+echo "[1/8] Removing nftables..."
 systemctl stop nftables 2>/dev/null || true
 systemctl disable nftables 2>/dev/null || true
 nft flush ruleset 2>/dev/null || true
 apt-get remove -y nftables 2>/dev/null | tail -1 || true
-echo "  ✅ nftables removed"
+echo "  OK nftables removed permanently"
 
 # ── STEP 2: Restore UFW + iptables ──────────────────────────
-echo "[2/7] Restoring firewall..."
+echo "[2/8] Restoring firewall..."
 iptables -P INPUT ACCEPT
 iptables -P FORWARD ACCEPT
 ufw --force enable
@@ -31,62 +31,90 @@ ufw allow 443/tcp
 ufw deny 8020/tcp
 ufw deny 9091/tcp
 ufw reload
-echo "  ✅ UFW restored"
+echo "  OK UFW restored — SSH/HTTP/HTTPS open"
 
 # ── STEP 3: Restore security services ───────────────────────
-echo "[3/7] Restarting security services..."
-systemctl start fail2ban   2>/dev/null && echo "  ✅ fail2ban" || echo "  ⚠️  fail2ban"
-systemctl start crowdsec   2>/dev/null && echo "  ✅ crowdsec" || echo "  ⚠️  crowdsec"
-systemctl start kt-spy-agent 2>/dev/null && echo "  ✅ kt-spy-agent" || echo "  ⚠️  kt-spy-agent"
-systemctl start kt-watchdog  2>/dev/null && echo "  ✅ kt-watchdog" || echo "  ⚠️  kt-watchdog"
+echo "[3/8] Restarting security services..."
+for svc in fail2ban crowdsec kt-spy-agent kt-watchdog; do
+    systemctl start $svc 2>/dev/null && echo "  OK $svc" || echo "  SKIP $svc"
+done
 
-# ── STEP 4: Pull latest code ─────────────────────────────────
-echo "[4/7] Pulling latest code from GitHub..."
+# ── STEP 4: Fix .env for domain-based URLs ──────────────────
+echo "[4/8] Updating .env for https://$DOMAIN..."
+cd $APP_DIR
+
+if grep -q "NEXT_PUBLIC_API_URL" .env; then
+    sed -i "s|NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=https://api.$DOMAIN|g" .env
+else
+    echo "NEXT_PUBLIC_API_URL=https://api.$DOMAIN" >> .env
+fi
+
+if grep -q "^DOMAIN=" .env; then
+    sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|g" .env
+else
+    echo "DOMAIN=$DOMAIN" >> .env
+fi
+
+if grep -q "ALLOWED_ORIGINS" .env; then
+    sed -i "s|ALLOWED_ORIGINS=.*|ALLOWED_ORIGINS=https://$DOMAIN,https://www.$DOMAIN,https://app.$DOMAIN,https://api.$DOMAIN|g" .env
+else
+    echo "ALLOWED_ORIGINS=https://$DOMAIN,https://www.$DOMAIN,https://app.$DOMAIN,https://api.$DOMAIN" >> .env
+fi
+
+sed -i '/ACME_EMAIL/d' .env
+echo "ACME_EMAIL=admin@$DOMAIN" >> .env
+echo "  OK .env updated"
+
+# ── STEP 5: Pull latest code ─────────────────────────────────
+echo "[5/8] Pulling latest code from GitHub..."
 cd $APP_DIR
 git pull origin main 2>&1 | tail -3
-echo "  ✅ Code updated"
+chmod +x infra/scripts/*.sh 2>/dev/null || true
+echo "  OK Code updated ($(git rev-parse --short HEAD))"
 
-# ── STEP 5: Verify DNS before HTTPS ─────────────────────────
-echo "[5/7] Checking DNS for $DOMAIN..."
+# ── STEP 6: Check DNS ────────────────────────────────────────
+echo "[6/8] Checking DNS for $DOMAIN..."
+apt-get install -y dnsutils 2>/dev/null | tail -1 || true
 RESOLVED=$(dig +short $DOMAIN @8.8.8.8 2>/dev/null | tail -1)
 if [ "$RESOLVED" = "167.114.155.166" ]; then
-    echo "  ✅ DNS OK — $DOMAIN → $RESOLVED"
+    echo "  OK DNS: $DOMAIN -> $RESOLVED"
     DNS_OK=true
 else
-    echo "  ⚠️  DNS not ready yet ($RESOLVED) — Caddy will retry Let's Encrypt automatically"
+    echo "  WARN DNS not ready ($RESOLVED) — Caddy auto-issues cert once DNS propagates"
     DNS_OK=false
 fi
 
-# ── STEP 6: Restart all containers ──────────────────────────
-echo "[6/7] Restarting containers..."
+# ── STEP 7: Rebuild + restart all containers ────────────────
+echo "[7/8] Rebuilding and restarting containers..."
 cd $APP_DIR
-docker compose -f infra/docker-compose.prod.yml --env-file .env up -d --remove-orphans 2>&1 | tail -5
-sleep 5
-echo "  ✅ Containers started"
+docker compose -f infra/docker-compose.prod.yml --env-file .env up -d --remove-orphans 2>&1 | tail -8
+sleep 8
+echo "  OK Containers started"
 
-# ── STEP 7: Status report ────────────────────────────────────
-echo "[7/7] Status check..."
+# ── STEP 8: Final status ─────────────────────────────────────
+echo "[8/8] Final status..."
 echo ""
-echo "  Services:"
-systemctl is-active ufw fail2ban crowdsec kt-spy-agent kt-watchdog 2>/dev/null | paste - - - - - | awk '{print "    "$1" "$2" "$3" "$4" "$5}'
+for svc in ufw fail2ban crowdsec kt-spy-agent kt-watchdog; do
+    STATUS=$(systemctl is-active $svc 2>/dev/null || echo "inactive")
+    [ "$STATUS" = "active" ] && echo "  OK $svc" || echo "  ERR $svc"
+done
 echo ""
-echo "  Containers:"
-docker ps --format "  {{.Names}}\t{{.Status}}" | grep -v "Exited"
+docker ps --format "  {{.Names}} {{.Status}}" 2>/dev/null
 echo ""
-
+echo "  NEXT_PUBLIC_API_URL=$(grep NEXT_PUBLIC_API_URL .env | cut -d= -f2)"
+echo "  DOMAIN=$(grep '^DOMAIN=' .env | cut -d= -f2)"
+echo ""
 if [ "$DNS_OK" = true ]; then
-    echo "══════════════════════════════════════════"
-    echo "  ✅ DONE — https://$DOMAIN should be live"
-    echo "  ✅ Let's Encrypt cert auto-issued by Caddy"
-    echo "══════════════════════════════════════════"
+    echo "LIVE: https://$DOMAIN"
+    echo "LIVE: https://api.$DOMAIN"
+    echo "LIVE: https://admin.$DOMAIN"
+    echo "LIVE: https://monitor.$DOMAIN"
 else
-    echo "══════════════════════════════════════════"
-    echo "  ⚠️  Add DNS A records in OVH Manager:"
-    echo "  tkverse.ca        → 167.114.155.166"
-    echo "  api.tkverse.ca    → 167.114.155.166"
-    echo "  app.tkverse.ca    → 167.114.155.166"
-    echo "  admin.tkverse.ca  → 167.114.155.166"
-    echo "  monitor.tkverse.ca → 167.114.155.166"
-    echo "  Then Caddy auto-issues Let's Encrypt cert"
-    echo "══════════════════════════════════════════"
+    echo "Add A records in OVH DNS:"
+    echo "  tkverse.ca         -> 167.114.155.166"
+    echo "  api.tkverse.ca     -> 167.114.155.166"
+    echo "  app.tkverse.ca     -> 167.114.155.166"
+    echo "  admin.tkverse.ca   -> 167.114.155.166"
+    echo "  monitor.tkverse.ca -> 167.114.155.166"
+    echo "  www.tkverse.ca     -> 167.114.155.166"
 fi
