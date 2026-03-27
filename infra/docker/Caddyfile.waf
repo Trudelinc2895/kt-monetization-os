@@ -1,0 +1,41 @@
+{
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+(security_headers) {
+    header {
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        Content-Security-Policy "default-src self; script-src self unsafe-inline; style-src self unsafe-inline"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+        -X-Powered-By
+    }
+}
+
+(block_scanners) {
+    @scanners {
+        header_regexp User-Agent "(nikto|sqlmap|masscan|nmap|zgrab|dirbuster|gobuster|wfuzz|hydra|medusa|metasploit|burpsuite|acunetix|nessus|openvas|w3af)"
+    }
+    respond @scanners 403
+}
+
+(block_sql_injection) {
+    @sqli {
+        path_regexp sqli "(?i)(union.*select|select.*from|drop.*table|insert.*into|delete.*from|exec.*\(|script.*>|<.*script)"
+    }
+    respond @sqli 403
+}
+
+:80 {
+    import security_headers
+    import block_scanners
+    import block_sql_injection
+    
+    reverse_proxy web:3000
+}

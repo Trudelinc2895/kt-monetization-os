@@ -1,54 +1,45 @@
-# KT Monetization OS — Caddyfile
-# MODE: HTTP-only (IP fallback until DNS is configured)
-# Switch to Caddyfile.https once tkverse.ca DNS resolves
+{
+    servers {
+        trusted_proxies static private_ranges
+    }
+}
+
+(security_headers) {
+    header {
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+        -X-Powered-By
+    }
+}
+
+(block_attackers) {
+    @scanners header_regexp User-Agent "(nikto|sqlmap|masscan|nmap|zgrab|dirbuster|gobuster|wfuzz|hydra|medusa|metasploit|burpsuite|acunetix|nessus|openvas|w3af|python-requests/2\.[0-2])"
+    respond @scanners 403
+
+    @sqli path_regexp "(union.*select|select.*from|drop.*table|insert.*into|exec.*\()"
+    respond @sqli 403
+
+    @path_traversal path_regexp "(\.\./|\.\.\\\\|%2e%2e)"
+    respond @path_traversal 403
+}
 
 :80 {
-    # API docs + openapi.json (strip /api prefix — FastAPI serves at /docs)
-    handle /api/docs* {
-        uri strip_prefix /api
-        reverse_proxy api:8010
-    }
-    handle /api/openapi.json {
-        uri strip_prefix /api
+    import security_headers
+    import block_attackers
+
+    handle /api/* {
         reverse_proxy api:8010
     }
 
-    # API health (strip /api prefix — served at /health)
-    handle /api/health {
-        uri strip_prefix /api
-        reverse_proxy api:8010
+    handle /admin/* {
+        reverse_proxy admin:3020
     }
 
-    # API versioned routes — NO strip (FastAPI already has /api/v1/... prefix)
-    handle /api/v1/* {
-        reverse_proxy api:8010
-        header X-Frame-Options DENY
-        header X-Content-Type-Options nosniff
-    }
-
-    # Direct health (no prefix)
-    handle /health {
-        reverse_proxy api:8010
-    }
-
-    # Landing page
     handle {
         reverse_proxy web:3000
-        encode gzip
-        header X-Frame-Options DENY
-        header X-Content-Type-Options nosniff
-        header Referrer-Policy strict-origin-when-cross-origin
     }
 }
-
-# Admin on dedicated port (HTTP-only)
-:8020 {
-    reverse_proxy admin:3020
-}
-
-# Grafana on dedicated port — listens on 3000 internally
-:9091 {
-    reverse_proxy grafana:3000
-}
-
-
