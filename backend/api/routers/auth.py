@@ -20,6 +20,7 @@ from api.core.security import (
     decode_token,
     hash_password,
     verify_password,
+    needs_rehash,
 )
 from api.models.audit import AuditLog
 from api.models.user import User
@@ -68,6 +69,11 @@ async def login(body: LoginRequest, request: Request, db: DB):
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
+
+    # Auto-upgrade bcrypt → Argon2id transparently
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(body.password)
+        await db.commit()
 
     await _audit(db, "login", user_id=user.id, ip=ip)
     return TokenResponse(
