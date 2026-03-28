@@ -1,4 +1,4 @@
-name: Security Scan
+name: 🔐 Security — Full Scan
 
 on:
   push:
@@ -6,64 +6,160 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 6 * * 1'  # Every Monday 6h UTC
+    - cron: '0 3 * * *'  # Daily 3h UTC
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
 
 jobs:
-  sast:
-    name: SAST — Bandit + pip-audit + TruffleHog
+  # ── 1. Secret detection ─────────────────────────────────────────────────────
+  secret-scan:
+    name: 🔑 Secret Detection (Gitleaks + TruffleHog)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Gitleaks — scan all commits
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install security tools
-        run: pip install bandit pip-audit safety
-
-      - name: Bandit SAST (Python)
-        run: |
-          bandit -r backend/ -f json -o bandit-report.json \
-            -x backend/tests/ --severity-level medium || true
-          bandit -r backend/ -f txt --severity-level high
-
-      - name: pip-audit (CVE scan)
-        run: |
-          pip-audit -r backend/requirements.txt \
-            --format json -o pip-audit-report.json || true
-          pip-audit -r backend/requirements.txt
-
-      - name: Safety check
-        run: |
-          safety check -r backend/requirements.txt \
-            --output text || true
-
-      - name: TruffleHog secret scan
+      - name: TruffleHog — verified secrets only
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: main
-          extra_args: --only-verified
+          base: ${{ github.event.before }}
+          extra_args: --only-verified --fail
 
-      - name: Upload reports
-        uses: actions/upload-artifact@v4
+  # ── 2. SAST Python ─────────────────────────────────────────────────────────
+  sast-python:
+    name: 🐍 SAST — Bandit + pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install tools
+        run: pip install bandit pip-audit
+
+      - name: Bandit SAST (HIGH severity = fail)
+        run: |
+          bandit -r backend/ \
+            -x backend/tests/ \
+            --severity-level high \
+            --confidence-level medium \
+            -f json -o bandit-report.json
+          bandit -r backend/ \
+            -x backend/tests/ \
+            --severity-level high \
+            --confidence-level medium
+
+      - name: pip-audit CVE scan (CRITICAL = fail)
+        run: |
+          pip-audit -r backend/requirements.txt \
+            --format json -o pip-audit-report.json
+          pip-audit -r backend/requirements.txt \
+            --vulnerability-service osv
+
+      - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: security-reports
+          name: sast-reports
           path: |
             bandit-report.json
             pip-audit-report.json
 
+  # ── 3. CodeQL ──────────────────────────────────────────────────────────────
+  codeql:
+    name: 🔬 CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [python, javascript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ── 4. Container scan ──────────────────────────────────────────────────────
+  trivy:
+    name: 🐳 Trivy Container Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy on filesystem
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ── 5. Dependency review (PRs only) ───────────────────────────────────────
   dependency-review:
-    name: Dependency Review
+    name: 📦 Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/dependency-review-action@v4
         with:
-          fail-on-severity: critical
+          fail-on-severity: high
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+  # ── 6. Docker Compose security lint ───────────────────────────────────────
+  docker-lint:
+    name: 🐳 Docker Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hadolint — Dockerfile best practices
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          failure-threshold: warning
+
+      - name: Checkov — IaC security
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/
+          framework: dockerfile,docker_compose
+          soft_fail: false
+          output_format: sarif
+          output_file_path: checkov.sarif
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
