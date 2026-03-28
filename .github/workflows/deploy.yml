@@ -25,7 +25,7 @@ jobs:
 
       - name: Deploy to VPS
         if: steps.secrets-check.outputs.configured == 'true'
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: root
