@@ -2,12 +2,19 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update -qq && apt-get install -y -qq libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends libpq-dev gcc \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system appuser \
+    && adduser --system --ingroup appuser appuser
 
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
+
+RUN chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8010
 

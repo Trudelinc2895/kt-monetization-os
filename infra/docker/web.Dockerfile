@@ -14,6 +14,8 @@ RUN npm run build
 
 FROM node:20-alpine
 
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser
+
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -21,6 +23,9 @@ ENV NODE_ENV=production
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
+
+RUN chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 3000
 
