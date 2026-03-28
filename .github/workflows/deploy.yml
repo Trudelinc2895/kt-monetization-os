@@ -10,7 +10,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check deploy secrets
+        id: secrets-check
+        run: |
+          if [ -n "$VPS_HOST" ] && [ -n "$VPS_KEY" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "::warning::Deploy ignoré — Ajouter VPS_HOST + VPS_SSH_PRIVATE_KEY dans Repo Settings → Secrets → Actions"
+          fi
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+
       - name: Deploy to VPS
+        if: steps.secrets-check.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -20,6 +34,6 @@ jobs:
             cd /opt/kt-monetization-os
             git pull origin main
             docker compose -f infra/docker-compose.prod.yml --env-file .env up -d --build --force-recreate api ai-orchestrator web
-            sleep 5
+            sleep 10
             curl -f http://localhost/health || exit 1
-            echo "Deploy successful"
+            echo "✅ Deploy successful"
