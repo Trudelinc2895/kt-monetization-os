@@ -385,40 +385,52 @@ async def stripe_webhook(
             try:
                 from sqlalchemy import select as _select
                 from api.models.user import User as _User
+                from api.models.subscription import Subscription as _Sub
+                from api.services.subscription_state_machine import handle_payment_failed
                 stripe_customer_id = data.get("customer")
                 result = await db.execute(
                     _select(_User).where(_User.stripe_customer_id == stripe_customer_id)
                 )
                 user = result.scalar_one_or_none()
                 if user:
-                    asyncio.create_task(
-                        send_payment_failed(user.email, user.plan or "Pro")
+                    sub_result = await db.execute(
+                        _select(_Sub).where(_Sub.user_id == user.id)
+                        .order_by(_Sub.created_at.desc()).limit(1)
                     )
+                    sub = sub_result.scalar_one_or_none()
+                    await handle_payment_failed(user, sub, db)
             except Exception as _exc:
-                logger.warning("[webhook] Could not queue payment-failed email: %s", _exc)
+                logger.warning("[webhook] Could not handle payment-failed: %s", _exc)
 
         elif event_type == "customer.subscription.trial_will_end":
             logger.info(f"[webhook] Trial ending soon for customer {data.get('customer')}")
             try:
                 from sqlalchemy import select as _select
+                from datetime import datetime, timezone
                 from api.models.user import User as _User
-                from api.services.email_service import send_trial_ending
+                from api.models.subscription import Subscription as _Sub
+                from api.services.subscription_state_machine import handle_trial_will_end
                 stripe_customer_id = data.get("customer")
                 result = await db.execute(
                     _select(_User).where(_User.stripe_customer_id == stripe_customer_id)
                 )
                 user = result.scalar_one_or_none()
                 if user:
+                    sub_result = await db.execute(
+                        _select(_Sub).where(_Sub.user_id == user.id)
+                        .order_by(_Sub.created_at.desc()).limit(1)
+                    )
+                    sub = sub_result.scalar_one_or_none()
                     trial_end_ts = data.get("trial_end")
                     days_left = 3
                     if trial_end_ts:
-                        from datetime import datetime, timezone
                         trial_end_dt = datetime.fromtimestamp(trial_end_ts, tz=timezone.utc)
                         delta = trial_end_dt - datetime.now(timezone.utc)
                         days_left = max(1, delta.days)
-                    asyncio.create_task(send_trial_ending(user.email, user.full_name, days_left))
+                    if sub:
+                        await handle_trial_will_end(user, sub, days_left, db)
             except Exception as _exc:
-                logger.warning("[webhook] Could not queue trial ending email: %s", _exc)
+                logger.warning("[webhook] Could not handle trial_will_end: %s", _exc)
 
         else:
             logger.debug(f"[webhook] Unhandled event type: {event_type}")

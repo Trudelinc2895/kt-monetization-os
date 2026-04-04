@@ -24,7 +24,7 @@ from api.schemas.content_cloner import (
     CloneFormats,
 )
 from api.services.content_cloner_service import clone_content
-from api.services.usage_service import check_and_charge_usage
+from api.services.usage_service import check_and_charge_usage, record_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -68,6 +68,12 @@ async def create_clone(body: CloneRequest, current_user: CurrentUser, db: DB):
         formats=formats,
     )
     db.add(clone)
+    # Record usage for metering (estimate tokens from content lengths)
+    tokens_estimate = max(
+        200,
+        len(body.original_content) // 4 + sum(len(str(v)) for v in formats.values()) // 4,
+    )
+    await record_usage(current_user.id, "content_cloner", tokens_estimate, db)
     await db.commit()
     await db.refresh(clone)
 

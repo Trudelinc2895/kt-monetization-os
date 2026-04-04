@@ -26,7 +26,7 @@ from api.schemas.ghost_agency import (
     OutreachMessageOut,
 )
 from api.services.ghost_agency_service import generate_outreach_message
-from api.services.usage_service import check_and_charge_usage
+from api.services.usage_service import check_and_charge_usage, record_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -98,6 +98,13 @@ async def generate_outreach(body: GenerateOutreachRequest, current_user: Current
     db.add(outreach_msg)
 
     campaign.messages_generated += 1
+
+    # Record usage for metering (estimate tokens from generated content length)
+    tokens_estimate = max(
+        150,
+        (len(generated.get("message", "")) + len(generated.get("hook", "")) + len(generated.get("personalization_notes", ""))) // 4,
+    )
+    await record_usage(current_user.id, "ghost_agency", tokens_estimate, db)
 
     await db.commit()
     await db.refresh(outreach_msg)
