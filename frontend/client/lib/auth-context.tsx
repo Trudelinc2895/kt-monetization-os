@@ -37,34 +37,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Restore session from localStorage on mount
+  // Restore session on mount — relies on httpOnly cookie sent automatically
   useEffect(() => {
     const restoreSession = async () => {
-      const refreshToken = localStorage.getItem("refresh_token");
-      if (!refreshToken) {
-        setLoading(false);
-        return;
-      }
       try {
-        // Refresh to get access token
+        // Attempt to refresh using the httpOnly cookie (no localStorage needed)
         const res = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/v1/auth/refresh`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ refresh_token: refreshToken }),
+            credentials: "include", // sends httpOnly refresh_token cookie
+            body: JSON.stringify({}),
           }
         );
         if (!res.ok) throw new Error("Session invalide");
         const data = await res.json();
         setAccessToken(data.access_token);
+        // Backward compat: persist in localStorage if server returns token (mobile)
         if (data.refresh_token) {
           localStorage.setItem("refresh_token", data.refresh_token);
         }
         const me = await getMe();
         setUser(me);
       } catch {
-        localStorage.removeItem("refresh_token");
+        localStorage.removeItem("refresh_token"); // cleanup legacy storage
       } finally {
         setLoading(false);
       }

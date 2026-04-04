@@ -27,7 +27,7 @@ async function apiFetch<T>(
     headers["Authorization"] = `Bearer ${_accessToken}`;
   }
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
 
   if (res.status === 401 && retry) {
     const refreshed = await refreshAccessToken();
@@ -53,18 +53,18 @@ async function apiFetch<T>(
 }
 
 async function refreshAccessToken(): Promise<boolean> {
-  const refreshToken = localStorage.getItem("refresh_token");
-  if (!refreshToken) return false;
-
   try {
+    // Browser sends httpOnly cookie automatically via credentials: "include"
     const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      credentials: "include", // sends httpOnly refresh_token cookie
+      body: JSON.stringify({}), // empty body — server reads token from cookie
     });
     if (!res.ok) return false;
     const data = await res.json();
     _accessToken = data.access_token;
+    // Backward compat: if server returns refresh_token in JSON (mobile clients), persist it
     if (data.refresh_token) {
       localStorage.setItem("refresh_token", data.refresh_token);
     }
@@ -405,6 +405,27 @@ export async function getModuleCatalog() {
   return apiFetch<Array<{ key: string; name: string; description: string; is_available: boolean }>>(
     "/api/v1/modules/catalog"
   );
+}
+
+export interface ModuleAccess {
+  slug: string;
+  name: string;
+  price_usd: number;
+  description: string;
+  access: boolean;
+  source: "plan" | "purchased" | "locked";
+  stripe_price_id_available: boolean;
+}
+
+export async function getMyModules() {
+  return apiFetch<{ plan: string; modules: ModuleAccess[] }>("/api/v1/billing/my-modules");
+}
+
+export async function createModuleCheckout(moduleSlug: string) {
+  return apiFetch<{ url: string }>("/api/v1/billing/module-checkout-session", {
+    method: "POST",
+    body: JSON.stringify({ module: moduleSlug }),
+  });
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────

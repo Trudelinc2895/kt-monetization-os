@@ -85,8 +85,17 @@ async def deduct_credits(
     db: AsyncSession,
     amount: int = 1,
     note: str | None = None,
+    idempotency_key: str | None = None,
 ) -> bool:
-    """Deduct credits and record in ledger. Returns False if insufficient balance."""
+    """Deduct credits and record in ledger. Returns False if insufficient balance.
+    Idempotent when idempotency_key is provided (safe to replay from webhooks)."""
+    if idempotency_key:
+        result = await db.execute(
+            select(CreditLedger).where(CreditLedger.idempotency_key == idempotency_key)
+        )
+        if result.scalar_one_or_none():
+            return True  # already processed
+
     if (user.credits or 0) < amount:
         return False
 
@@ -97,6 +106,7 @@ async def deduct_credits(
         amount=-amount,
         balance_after=user.credits,
         source=source,
+        idempotency_key=idempotency_key,
         note=note,
     )
     db.add(user)
