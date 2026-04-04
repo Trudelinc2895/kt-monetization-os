@@ -69,6 +69,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         import logging as _log
         _log.getLogger("startup").info("ℹ️  Missing Stripe module price IDs (module checkout disabled): %s", _missing_module)
 
+    # ── Redis health check ─────────────────────────────────────────────────────
+    import logging as _log
+    _redis_logger = _log.getLogger("startup")
+    try:
+        _r = _aioredis.from_url(settings.REDIS_URL, socket_connect_timeout=3)
+        await _r.ping()
+        await _r.aclose()
+        _redis_logger.info("[startup] Redis ✅ connected at %s", settings.REDIS_URL)
+    except Exception as _redis_exc:
+        if settings.APP_ENV == "production":
+            raise RuntimeError(
+                f"FATAL: Redis unavailable in production ({settings.REDIS_URL}). "
+                "Set REDIS_URL or provide a reachable Redis instance."
+            ) from _redis_exc
+        else:
+            _redis_logger.warning(
+                "⚠️  Redis not reachable (%s). Rate limiting will fail-open in dev. "
+                "Requires Redis in production.",
+                _redis_exc,
+            )
+
     yield
     print("[shutdown] clean exit")
 

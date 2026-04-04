@@ -64,6 +64,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+# ── Prometheus counters (graceful fallback) ───────────────────────────────────
+try:
+    from prometheus_client import Counter
+    _payment_errors = Counter(
+        "kt_payment_errors_total", "Stripe payment / checkout errors", ["reason"]
+    )
+    _module_purchases = Counter(
+        "kt_module_purchases_total", "Module subscription purchases completed", ["module"]
+    )
+    _plan_purchases = Counter(
+        "kt_plan_purchases_total", "Plan subscription purchases completed", ["plan", "interval"]
+    )
+    _webhook_errors = Counter(
+        "kt_webhook_errors_total", "Stripe webhook processing errors", ["event_type"]
+    )
+    _quota_exceeded = Counter(
+        "kt_quota_exceeded_total", "Requests blocked by quota limit", ["plan"]
+    )
+    _HAS_PROM = True
+except Exception:
+    _HAS_PROM = False
+
 
 # ─── Public ───────────────────────────────────────────────────────────────────
 
@@ -245,6 +267,8 @@ async def create_checkout_session(body: CheckoutRequest, current_user: CurrentUs
             f"[billing] Missing Stripe price ID for plan={body.plan} interval={body.interval}. "
             "Run stripe/setup_stripe.py and set STRIPE_PRICE_* in .env"
         )
+        if _HAS_PROM:
+            _payment_errors.labels(reason="missing_price_id").inc()
         raise HTTPException(
             status_code=503,
             detail=f"Paiement temporairement indisponible pour le plan '{body.plan}' ({body.interval}). "
@@ -253,19 +277,28 @@ async def create_checkout_session(body: CheckoutRequest, current_user: CurrentUs
 
     customer_id = await get_or_create_stripe_customer(current_user, db)
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        client_reference_id=str(current_user.id),  # links webhook back to our user
-        payment_method_types=["card"],
-        line_items=[{"price": price_id, "quantity": 1}],
-        mode="subscription",
-        success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL,
-        cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
-        subscription_data={
-            "metadata": {"user_id": str(current_user.id), "plan": body.plan},
-        },
+    try:
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            client_reference_id=str(current_user.id),
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL,
+            cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
+            subscription_data={
+                "metadata": {"user_id": str(current_user.id), "plan": body.plan},
+            },
+        )
+    except stripe.StripeError as exc:
+        logger.error("[billing] Stripe error creating checkout for plan=%s: %s", body.plan, exc)
+        if _HAS_PROM:
+            _payment_errors.labels(reason="stripe_api_error").inc()
+        raise HTTPException(status_code=503, detail="Erreur Stripe — réessaie dans quelques instants.")
+    logger.info(
+        "[billing] Plan checkout session %s created user=%s plan=%s interval=%s",
+        session.id, current_user.id, body.plan, body.interval,
     )
-    logger.info(f"[billing] Checkout session {session.id} created for user {current_user.id}")
     return CheckoutResponse(url=session.url)
 
 
@@ -283,6 +316,8 @@ async def create_module_checkout_session(
 
     price_id: str | None = mod_cfg.get("stripe_price_id")
     if not price_id:
+        if _HAS_PROM:
+            _payment_errors.labels(reason="module_price_not_configured").inc()
         raise HTTPException(
             status_code=503,
             detail=f"Module '{body.module}' is not yet configured for individual purchase. "
@@ -291,25 +326,31 @@ async def create_module_checkout_session(
 
     customer_id = await get_or_create_stripe_customer(current_user, db)
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        client_reference_id=str(current_user.id),
-        payment_method_types=["card"],
-        line_items=[{"price": price_id, "quantity": 1}],
-        mode="subscription",
-        success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL,
-        cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
-        subscription_data={
-            "metadata": {
-                "user_id": str(current_user.id),
-                "module": body.module,
-                "type": "module",
+    try:
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            client_reference_id=str(current_user.id),
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL,
+            cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
+            subscription_data={
+                "metadata": {
+                    "user_id": str(current_user.id),
+                    "module": body.module,
+                    "type": "module",
+                },
             },
-        },
-    )
+        )
+    except stripe.StripeError as exc:
+        logger.error("[billing] Stripe error creating module checkout module=%s: %s", body.module, exc)
+        if _HAS_PROM:
+            _payment_errors.labels(reason="stripe_api_error").inc()
+        raise HTTPException(status_code=503, detail="Erreur Stripe — réessaie dans quelques instants.")
     logger.info(
-        f"[billing] Module checkout session {session.id} created "
-        f"for user {current_user.id} module={body.module}"
+        "[billing] Module checkout session %s created user=%s module=%s",
+        session.id, current_user.id, body.module,
     )
     return CheckoutResponse(url=session.url)
 
@@ -563,7 +604,9 @@ async def stripe_webhook(
 
     except Exception as exc:
         error = str(exc)
-        logger.exception(f"[webhook] Error processing {event_type} id={event_id}: {exc}")
+        logger.exception("[webhook] Error processing %s id=%s: %s", event_type, event_id, exc)
+        if _HAS_PROM:
+            _webhook_errors.labels(event_type=event_type).inc()
         await mark_event(event_id, event_type, "failed", error, db)
         # Return 200 to prevent Stripe from retrying non-retriable errors.
         # For transient DB errors, let it raise (Stripe will retry).
