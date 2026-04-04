@@ -21,8 +21,13 @@ load_dotenv(".env")
 from api.config import settings
 from api.database import engine, Base
 from api.routers import auth, billing, modules, users, health, mobile, orchestrate, ghost_agency, content_cloner, analytics
+from api.routers import notifications
+from api.routers import admin
 # Import models so Base knows about them before create_all
 import api.models  # noqa: F401
+
+from api.core.logging import setup_logging, set_request_id
+setup_logging(level=settings.LOG_LEVEL if hasattr(settings, "LOG_LEVEL") else "INFO")
 
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
@@ -62,7 +67,8 @@ app.add_middleware(
 
 @app.middleware("http")
 async def request_meta(request: Request, call_next) -> Response:
-    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
+    set_request_id(req_id)
     start = time.perf_counter()
     response: Response = await call_next(request)
     ms = (time.perf_counter() - start) * 1000
@@ -170,3 +176,5 @@ app.include_router(orchestrate.router, prefix="/api/v1", tags=["AI orchestrator"
 app.include_router(content_cloner.router, prefix="/api/v1", tags=["content cloner"])
 app.include_router(ghost_agency.router, prefix="/api/v1", tags=["ghost agency"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
+app.include_router(notifications.router, prefix="/api/v1", tags=["notifications"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])

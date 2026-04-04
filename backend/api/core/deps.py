@@ -82,6 +82,19 @@ def require_feature(feature: str):
     return _check
 
 
+async def get_admin_user(
+    user: Annotated[User, Depends(get_current_active_user)],
+) -> User:
+    """Require the user to have admin role (is_admin flag)."""
+    if not getattr(user, "is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
 # Typed aliases for cleaner route signatures
 CurrentUser = Annotated[User, Depends(get_current_active_user)]
 DB = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_admin_user)]
