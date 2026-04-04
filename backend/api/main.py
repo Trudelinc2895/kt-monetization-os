@@ -21,6 +21,7 @@ load_dotenv(".env")
 from api.config import settings
 from api.database import engine, Base
 from api.routers import auth, billing, modules, users, health, mobile, orchestrate, ghost_agency, content_cloner, analytics
+from api.routers import micro_saas, decision_engine, knowledge_weapon, digital_leverage, reverse_engineering, offer_generator, execution_service
 from api.routers import notifications
 from api.routers import admin
 from api.routers import team
@@ -44,6 +45,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("[startup] DB tables ready")
+
+    # ── Stripe price ID validation ──────────────────────────────────────────────
+    _stripe_fields = {
+        "STRIPE_PRICE_PRO_MONTHLY_ID": settings.STRIPE_PRICE_PRO_MONTHLY_ID,
+        "STRIPE_PRICE_PRO_YEARLY_ID": settings.STRIPE_PRICE_PRO_YEARLY_ID,
+        "STRIPE_PRICE_BUSINESS_MONTHLY_ID": settings.STRIPE_PRICE_BUSINESS_MONTHLY_ID,
+        "STRIPE_PRICE_BUSINESS_YEARLY_ID": settings.STRIPE_PRICE_BUSINESS_YEARLY_ID,
+    }
+    _module_fields = {
+        f"STRIPE_PRICE_MODULE_{m.upper()}": getattr(settings, f"STRIPE_PRICE_MODULE_{m.upper()}", "")
+        for m in ["OPERATOR", "CONTENT", "MICRO_SAAS", "GHOST", "DECISION", "KNOWLEDGE", "LEVERAGE", "REVERSE", "OFFER", "EXECUTION"]
+    }
+    _missing_plan = [k for k, v in _stripe_fields.items() if not v]
+    _missing_module = [k for k, v in _module_fields.items() if not v]
+    if _missing_plan:
+        if settings.APP_ENV == "production":
+            raise RuntimeError(f"FATAL: Missing Stripe plan price IDs in production: {_missing_plan}")
+        else:
+            import logging as _log
+            _log.getLogger("startup").warning("⚠️  Missing Stripe plan price IDs (checkout will return 503): %s", _missing_plan)
+    if _missing_module:
+        import logging as _log
+        _log.getLogger("startup").info("ℹ️  Missing Stripe module price IDs (module checkout disabled): %s", _missing_module)
+
     yield
     print("[shutdown] clean exit")
 
@@ -204,5 +229,12 @@ app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(team.router, prefix="/api/v1", tags=["team"])
+app.include_router(micro_saas.router, prefix="/api/v1", tags=["Micro-SaaS Builder"])
+app.include_router(decision_engine.router, prefix="/api/v1", tags=["Decision Engine"])
+app.include_router(knowledge_weapon.router, prefix="/api/v1", tags=["Knowledge Weapon"])
+app.include_router(digital_leverage.router, prefix="/api/v1", tags=["Digital Leverage"])
+app.include_router(reverse_engineering.router, prefix="/api/v1", tags=["Reverse Engineering"])
+app.include_router(offer_generator.router, prefix="/api/v1", tags=["Offer Generator"])
+app.include_router(execution_service.router, prefix="/api/v1", tags=["Execution Service"])
 from api.routers.contact import router as contact_router
 app.include_router(contact_router, prefix="/api/v1", tags=["contact"])

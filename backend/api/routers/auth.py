@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response as FastAPIResponse, status
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,7 +100,7 @@ async def register(body: RegisterRequest, request: Request, db: DB):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, request: Request, db: DB):
+async def login(body: LoginRequest, request: Request, response: FastAPIResponse, db: DB):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     ip = request.client.host if request.client else None
@@ -128,17 +128,34 @@ async def login(body: LoginRequest, request: Request, db: DB):
 
     await _audit(db, "login", user_id=user.id, ip=ip)
     await db.commit()
+    refresh_token_value = create_refresh_token(str(user.id))
+    # Set refresh token as httpOnly cookie (XSS-safe); JSON body kept for mobile backward compat
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token_value,
+        httponly=True,
+        secure=settings.APP_ENV == "production",
+        samesite="strict",
+        max_age=settings.JWT_REFRESH_EXPIRE_DAYS * 86400,
+        path="/api/v1/auth",
+    )
     return LoginResponse(
         access_token=create_access_token(str(user.id), extra={"plan": user.plan}),
-        refresh_token=create_refresh_token(str(user.id)),
+        refresh_token=refresh_token_value,  # kept for mobile backward compat
         expires_in=_ACCESS_EXPIRE_SEC,
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, db: DB):
+async def refresh(request: Request, db: DB, body: RefreshRequest | None = None):
+    # Cookie takes priority; fall back to JSON body for mobile backward compat
+    token = request.cookies.get("refresh_token")
+    if not token and body:
+        token = body.refresh_token
+    if not token:
+        raise HTTPException(status_code=401, detail="Refresh token manquant")
     try:
-        payload = decode_token(body.refresh_token)
+        payload = decode_token(token)
         if payload.get("type") != "refresh":
             raise ValueError
         user_id = payload["sub"]
@@ -163,11 +180,10 @@ async def me(current_user: CurrentUser):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(current_user: CurrentUser, db: DB):
+async def logout(current_user: CurrentUser, response: FastAPIResponse, db: DB):
     """
-    Logout — invalidates device sessions for current user.
+    Logout — invalidates device sessions for current user and clears the httpOnly refresh token cookie.
     Access token expires naturally (JWT stateless).
-    Client MUST delete the refresh token from SecureStore/localStorage.
     """
     from sqlalchemy import update
     from api.models.device_session import DeviceSession
@@ -179,6 +195,7 @@ async def logout(current_user: CurrentUser, db: DB):
         .values(is_active=False)
     )
     await db.commit()
+    response.delete_cookie(key="refresh_token", path="/api/v1/auth")
 
 
 _RESET_EXPIRE_HOURS = 1
@@ -333,7 +350,7 @@ async def disable_2fa(body: TwoFADisableRequest, current_user: CurrentUser, db: 
 
 
 @router.post("/2fa/verify-login", response_model=TokenResponse)
-async def verify_2fa_login(body: TwoFALoginRequest, request: Request, db: DB):
+async def verify_2fa_login(body: TwoFALoginRequest, request: Request, response: FastAPIResponse, db: DB):
     """
     Exchange a 2FA partial token + TOTP code for a full JWT.
     Called after /login returns requires_2fa=True.
@@ -361,9 +378,20 @@ async def verify_2fa_login(body: TwoFALoginRequest, request: Request, db: DB):
 
     await _audit(db, "login_2fa_verified", user_id=user.id, ip=ip)
     await db.commit()
+    refresh_token_value = create_refresh_token(str(user.id))
+    # Set refresh token as httpOnly cookie; JSON body kept for mobile backward compat
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token_value,
+        httponly=True,
+        secure=settings.APP_ENV == "production",
+        samesite="strict",
+        max_age=settings.JWT_REFRESH_EXPIRE_DAYS * 86400,
+        path="/api/v1/auth",
+    )
     return TokenResponse(
         access_token=create_access_token(str(user.id), extra={"plan": user.plan}),
-        refresh_token=create_refresh_token(str(user.id)),
+        refresh_token=refresh_token_value,  # kept for mobile backward compat
         expires_in=_ACCESS_EXPIRE_SEC,
     )
 

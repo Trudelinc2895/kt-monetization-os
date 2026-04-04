@@ -437,51 +437,6 @@ async def check_usage_limit(
         return True
 
 
-async def check_and_charge_usage(user: object, db: AsyncSession) -> tuple[bool, str]:
-    """
-    Full usage gate with overage credit fallback.
-
-    Returns (allowed: bool, reason: str):
-      "within_limit"     — under plan quota, proceed normally
-      "unlimited"        — business plan, no cap
-      "credit_deducted"  — over quota but 1 credit was deducted (overage billing)
-      "limit_exceeded"   — over quota, no credits or overage not enabled
-      "redis_unavailable"— Redis down, fail-open
-
-    Overage logic (revenue expansion):
-      When a user exceeds their monthly limit AND their plan has overage_allowed=True
-      AND they have at least 1 credit, 1 credit is atomically deducted instead of
-      blocking the request. Each credit = 1 overage message.
-    """
-    from api.services.billing_service import has_feature  # avoid circular import
-
-    plan: str = getattr(user, "plan", "free")
-    user_id: uuid.UUID = getattr(user, "id")
-    limit = _PLAN_LIMITS.get(plan, _PLAN_LIMITS["free"])
-
-    if limit == -1:
-        return True, "unlimited"
-
-    try:
-        redis = await _get_redis()
-        raw = await redis.get(_month_key(user_id))
-        count = int(raw) if raw else 0
-    except Exception:
-        return True, "redis_unavailable"
-
-    if count < limit:
-        return True, "within_limit"
-
-    # Over limit — attempt overage credit deduction
-    if has_feature(plan, "overage_allowed") and (getattr(user, "credits", 0) or 0) > 0:
-        from api.services.credit_service import deduct_credits
-        deducted = await deduct_credits(user, source="overage", db=db)
-        if deducted:
-            return True, "credit_deducted"
-
-    return False, "limit_exceeded"
-
-
 async def get_usage_history(
     user_id: uuid.UUID,
     db: AsyncSession,
