@@ -181,10 +181,10 @@ async def check_and_charge_usage(user: object, db: AsyncSession) -> tuple[bool, 
 
     # Over limit — attempt overage credit deduction
     if has_feature(plan, "overage_allowed") and (getattr(user, "credits", 0) or 0) > 0:
-        user.credits -= 1  # type: ignore[attr-defined]
-        db.add(user)
-        await db.commit()
-        return True, "credit_deducted"
+        from api.services.credit_service import deduct_credits
+        deducted = await deduct_credits(user, source="overage", db=db)
+        if deducted:
+            return True, "credit_deducted"
 
     return False, "limit_exceeded"
 
