@@ -208,5 +208,83 @@ async def send_payment_failed(to: str, plan: str) -> bool:
     return await _send(to, "⚠️ Échec de paiement — Action requise", html)
 
 
+async def send_trial_ending(to: str, name: str, days_left: int) -> bool:
+    """Notify user that their trial ends in N days."""
+    display = name or to
+    plural = "jour" if days_left == 1 else "jours"
+    html = _wrap(f"""
+      <h1 style="margin:0 0 16px;color:#F9FAFB;font-size:24px;font-weight:800;">
+        Ta periode d'essai se termine dans {days_left} {plural}
+      </h1>
+      <p style="margin:0 0 12px;">
+        Salut <strong style="color:#A78BFA;">{display}</strong>,
+      </p>
+      <p style="margin:0 0 12px;">
+        Ta periode d'essai expire dans
+        <strong style="color:#FBBF24;">{days_left} {plural}</strong>.
+        Pour continuer sans interruption, active ton abonnement maintenant.
+      </p>
+      <p style="margin:0 0 28px;">
+        Profite de <strong>-20% sur le plan annuel</strong>, disponible depuis ton dashboard.
+      </p>
+      {_btn(_DASHBOARD_URL + "/billing", "Activer mon abonnement")}
+      <p style="margin:28px 0 0;color:#9CA3AF;font-size:13px;">
+        Des questions ? Reponds directement a cet e-mail.
+      </p>
+    """)
+    return await _send(to, f"Periode d'essai : {days_left} {plural} restant(s)", html)
+
+
+async def send_usage_alert(to: str, name: str, pct: int, plan: str) -> bool:
+    """Notify user they have reached 80%+ of their monthly usage limit."""
+    display = name or to
+    plan_display = plan.capitalize()
+    html = _wrap(f"""
+      <h1 style="margin:0 0 16px;color:#F9FAFB;font-size:24px;font-weight:800;">
+        Quota mensuel : {pct}% utilise
+      </h1>
+      <p style="margin:0 0 12px;">
+        Salut <strong style="color:#A78BFA;">{display}</strong>,
+      </p>
+      <p style="margin:0 0 12px;">
+        Tu as consomme <strong style="color:#FBBF24;">{pct}%</strong> de tes messages
+        inclus dans le plan <strong>{plan_display}</strong>.
+      </p>
+      <p style="margin:0 0 12px;">
+        Une fois la limite atteinte, tes credits d'overage seront debites automatiquement.
+        Tu peux aussi upgrader ton plan pour obtenir plus de messages.
+      </p>
+      {_btn(_DASHBOARD_URL + "/billing", "Voir mon usage")}
+    """)
+    return await _send(to, f"Alerte quota — {pct}% utilise ce mois", html)
+
+
+async def send_low_credits(to: str, name: str, balance: int) -> bool:
+    """Notify user their overage credit balance is critically low (less than 3)."""
+    display = name or to
+    plural = "credit" if balance <= 1 else "credits"
+    html = _wrap(f"""
+      <h1 style="margin:0 0 16px;color:#F9FAFB;font-size:24px;font-weight:800;">
+        Credits d'overage presque epuises
+      </h1>
+      <p style="margin:0 0 12px;">
+        Salut <strong style="color:#A78BFA;">{display}</strong>,
+      </p>
+      <p style="margin:0 0 12px;">
+        Il te reste seulement
+        <strong style="color:#F87171;">{balance} {plural}</strong> d'overage.
+        Une fois epuises, les requetes au-dela de ta limite mensuelle seront bloquees.
+      </p>
+      <p style="margin:0 0 28px;">
+        Recharge maintenant pour eviter toute interruption.
+      </p>
+      {_btn(_DASHBOARD_URL + "/billing", "Recharger mes credits")}
+      <p style="margin:28px 0 0;color:#9CA3AF;font-size:13px;">
+        Packs disponibles a partir de 4$ / 50 credits.
+      </p>
+    """)
+    return await _send(to, "Alerte credits — rechargement requis", html)
+
+
 # Alias for billing router compatibility
 send_billing_confirmation = send_subscription_email
