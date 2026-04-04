@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 backend/api/services/billing_service.py
 
@@ -64,8 +65,8 @@ def _build_plans() -> dict[str, dict]:
         },
         "pro": {
             "name": "Pro",
-            "price_monthly_usd": 29,
-            "price_yearly_usd": 290,
+            "price_monthly_usd": 79,
+            "price_yearly_usd": 790,
             "yearly_discount_pct": 17,
             "trial_days": 14,
             "support_level": "priority",
@@ -95,8 +96,8 @@ def _build_plans() -> dict[str, dict]:
         },
         "business": {
             "name": "Business",
-            "price_monthly_usd": 99,
-            "price_yearly_usd": 990,
+            "price_monthly_usd": 149,
+            "price_yearly_usd": 1490,
             "yearly_discount_pct": 17,
             "trial_days": 14,
             "support_level": "dedicated",
@@ -165,7 +166,81 @@ ADDONS_CONFIG: dict[str, dict] = {
     },
 }
 
-# Gamification milestones — progression system for user engagement / lock-in
+# ─── Per-module à-la-carte pricing ────────────────────────────────────────────
+MODULES_CONFIG: dict[str, dict] = {
+    "operator": {
+        "name": "AI Personal Operator",
+        "slug": "operator",
+        "price_usd": 19,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_OPERATOR or None,
+        "description": "Digital employee managing emails, decisions and tasks 24/7",
+    },
+    "content": {
+        "name": "Content Cloner Engine",
+        "slug": "content",
+        "price_usd": 15,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_CONTENT or None,
+        "description": "Clone viral content and republish across all platforms",
+    },
+    "micro_saas": {
+        "name": "Micro-SaaS Builder",
+        "slug": "micro_saas",
+        "price_usd": 29,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_MICRO_SAAS or None,
+        "description": "Launch a hyper-specific tool in 24h",
+    },
+    "ghost": {
+        "name": "Ghost Automation Agency",
+        "slug": "ghost",
+        "price_usd": 39,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_GHOST or None,
+        "description": "Automate repetitive client tasks — they pay, you deliver",
+    },
+    "decision": {
+        "name": "AI Decision Engine",
+        "slug": "decision",
+        "price_usd": 19,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_DECISION or None,
+        "description": "Analyse, structure and recommend — make better decisions faster",
+    },
+    "knowledge": {
+        "name": "Knowledge Weapon System",
+        "slug": "knowledge",
+        "price_usd": 15,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_KNOWLEDGE or None,
+        "description": "Turn books, videos and courses into immediate action plans",
+    },
+    "leverage": {
+        "name": "Digital Leverage Engine",
+        "slug": "leverage",
+        "price_usd": 19,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_LEVERAGE or None,
+        "description": "Multiply your output without multiplying your hours",
+    },
+    "reverse": {
+        "name": "Reverse Engineering Module",
+        "slug": "reverse",
+        "price_usd": 25,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_REVERSE or None,
+        "description": "Decode what works for competitors and replicate it",
+    },
+    "offer": {
+        "name": "Offer Generator",
+        "slug": "offer",
+        "price_usd": 15,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_OFFER or None,
+        "description": "Create irresistible offers in minutes with AI",
+    },
+    "execution": {
+        "name": "Execution Service",
+        "slug": "execution",
+        "price_usd": 29,
+        "stripe_price_id": settings.STRIPE_PRICE_MODULE_EXECUTION or None,
+        "description": "Turn every idea into an executable and measurable system",
+    },
+}
+
+# Gamification milestones -- progression system for user engagement / lock-in
 MILESTONES: list[dict] = [
     {"key": "first_message", "label": "First AI message sent", "threshold": 1, "icon": "🤖"},
     {"key": "ten_messages", "label": "10 messages sent", "threshold": 10, "icon": "🔥"},

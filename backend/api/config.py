@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ADDON_STORAGE_10GB: str = ""
     STRIPE_PRICE_CREDITS_PACK: str = ""
 
+    # Per-module à-la-carte prices (optional — set in Stripe dashboard)
+    STRIPE_PRICE_MODULE_OPERATOR: str = ""
+    STRIPE_PRICE_MODULE_CONTENT: str = ""
+    STRIPE_PRICE_MODULE_MICRO_SAAS: str = ""
+    STRIPE_PRICE_MODULE_GHOST: str = ""
+    STRIPE_PRICE_MODULE_DECISION: str = ""
+    STRIPE_PRICE_MODULE_KNOWLEDGE: str = ""
+    STRIPE_PRICE_MODULE_LEVERAGE: str = ""
+    STRIPE_PRICE_MODULE_REVERSE: str = ""
+    STRIPE_PRICE_MODULE_OFFER: str = ""
+    STRIPE_PRICE_MODULE_EXECUTION: str = ""
+
     # Resend email
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "noreply@tkverse.ca"
