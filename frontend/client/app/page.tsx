@@ -18,9 +18,9 @@ const PLANS = [
   {
     key: "pro",
     name: "Pro",
-    price: "$29",
+    price: "$79",
     period: "/mois",
-    yearlyPrice: "$290/an",
+    yearlyPrice: "$790/an",
     yearlyDiscount: "17% off",
     desc: "Pour freelancers & solopreneurs",
     features: ["5 modules IA", "1 000 messages/mois", "Accès API", "Support prioritaire", "Export données", "Automatisations"],
@@ -31,9 +31,9 @@ const PLANS = [
   {
     key: "business",
     name: "Business",
-    price: "$99",
+    price: "$149",
     period: "/mois",
-    yearlyPrice: "$990/an",
+    yearlyPrice: "$1490/an",
     yearlyDiscount: "17% off",
     desc: "Pour agences & équipes",
     features: ["10 modules IA", "Messages illimités", "White-label", "Support dédié", "Accès anticipé", "Sièges équipe", "API illimitée"],
@@ -44,12 +44,16 @@ const PLANS = [
 ];
 
 const MODULES = [
-  { icon: "🤖", title: "AI Personal Operator", desc: "Un employé digital qui gère tes emails, décisions et tâches — 24/7." },
-  { icon: "📡", title: "Content Cloner Engine", desc: "Prend le contenu viral → le restructure → publie sur toutes tes plateformes." },
-  { icon: "⚙️", title: "Micro-SaaS Invisible", desc: "Lance un outil ultra-spécifique en 24h. Un problème, une solution, des abonnés." },
-  { icon: "👻", title: "Ghost Automation Agency", desc: "Automatise les tâches répétitives de tes clients. Ils paient, tu livres." },
-  { icon: "🧠", title: "AI Decision Engine", desc: "Analyse, structure et recommande. Prends de meilleures décisions plus vite." },
-  { icon: "📚", title: "Knowledge Weapon System", desc: "Transforme livres, vidéos, formations en plans d'action immédiat." },
+  { icon: "🤖", title: "AI Personal Operator", price: "$19/mo", desc: "Un employé digital qui gère tes emails, décisions et tâches — 24/7." },
+  { icon: "📡", title: "Content Cloner Engine", price: "$15/mo", desc: "Prend le contenu viral → le restructure → publie sur toutes tes plateformes." },
+  { icon: "⚙️", title: "Micro-SaaS Builder", price: "$29/mo", desc: "Lance un outil ultra-spécifique en 24h. Un problème, une solution, des abonnés." },
+  { icon: "👻", title: "Ghost Automation Agency", price: "$39/mo", desc: "Automatise les tâches répétitives de tes clients. Ils paient, tu livres." },
+  { icon: "🧠", title: "AI Decision Engine", price: "$19/mo", desc: "Analyse, structure et recommande. Prends de meilleures décisions plus vite." },
+  { icon: "📚", title: "Knowledge Weapon System", price: "$15/mo", desc: "Transforme livres, vidéos, formations en plans d'action immédiat." },
+  { icon: "⚡", title: "Digital Leverage Engine", price: "$19/mo", desc: "Multiplie ta production sans multiplier tes heures." },
+  { icon: "🔍", title: "Reverse Engineering Module", price: "$25/mo", desc: "Décode ce qui fonctionne chez tes compétiteurs et reproduis-le." },
+  { icon: "🎯", title: "Offer Generator", price: "$15/mo", desc: "Crée des offres irrésistibles en quelques minutes avec l'IA." },
+  { icon: "🚀", title: "Execution Service", price: "$29/mo", desc: "Transforme chaque idée en système exécutable et mesurable." },
 ];
 
 export default function Home() {
@@ -164,7 +168,10 @@ export default function Home() {
           {MODULES.map((m) => (
             <div key={m.title} className="bg-gray-900 border border-gray-800 rounded-xl p-6 hover:border-violet-500/50 transition group">
               <div className="text-3xl mb-3">{m.icon}</div>
-              <h3 className="font-bold text-lg mb-2 group-hover:text-violet-400 transition">{m.title}</h3>
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="font-bold text-lg group-hover:text-violet-400 transition leading-tight">{m.title}</h3>
+                <span className="text-violet-400 font-bold text-sm ml-3 whitespace-nowrap">{m.price}</span>
+              </div>
               <p className="text-gray-400 text-sm leading-relaxed">{m.desc}</p>
             </div>
           ))}
@@ -278,7 +285,7 @@ export default function Home() {
         <div className="flex justify-center gap-6 mt-4">
           <a href="/privacy" className="hover:text-white transition">Confidentialité</a>
           <a href="/terms" className="hover:text-white transition">CGU</a>
-          <a href="mailto:admin@tkverse.ca" className="hover:text-white transition">Contact</a>
+          <Link href="/contact" className="hover:text-white transition">Contact</Link>
         </div>
       </footer>
     </main>

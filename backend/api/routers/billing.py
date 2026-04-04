@@ -37,12 +37,15 @@ from api.schemas.billing import (
     CreditPurchaseRequest,
     CreditPurchaseResponse,
     EntitlementsResponse,
+    ModuleCheckoutRequest,
+    ModulePublic,
     PlanPublic,
     PortalResponse,
     UsageResponse,
 )
 from api.services.billing_service import (
     ADDONS_CONFIG,
+    MODULES_CONFIG,
     PLANS_CONFIG,
     compute_entitlements,
     get_active_subscription,
@@ -81,6 +84,21 @@ async def list_plans() -> list[PlanPublic]:
             features_enabled=cfg["features_enabled"],
         )
         for slug, cfg in PLANS_CONFIG.items()
+    ]
+
+
+@router.get("/modules", response_model=list[ModulePublic])
+async def list_modules() -> list[ModulePublic]:
+    """Return all available à-la-carte modules with pricing."""
+    return [
+        ModulePublic(
+            slug=cfg["slug"],
+            name=cfg["name"],
+            price_usd=cfg["price_usd"],
+            description=cfg["description"],
+            available=bool(cfg.get("stripe_price_id")),
+        )
+        for cfg in MODULES_CONFIG.values()
     ]
 
 
@@ -191,7 +209,51 @@ async def create_checkout_session(body: CheckoutRequest, current_user: CurrentUs
     return CheckoutResponse(url=session.url)
 
 
-@router.post("/portal-session", response_model=PortalResponse)
+@router.post("/module-checkout-session", response_model=CheckoutResponse)
+async def create_module_checkout_session(
+    body: ModuleCheckoutRequest, current_user: CurrentUser, db: DB
+):
+    """
+    Create a Stripe Checkout session for a single module purchase.
+    Module slug resolved server-side from MODULES_CONFIG only.
+    """
+    mod_cfg = MODULES_CONFIG.get(body.module)
+    if not mod_cfg:
+        raise HTTPException(status_code=400, detail=f"Unknown module: {body.module}")
+
+    price_id: str | None = mod_cfg.get("stripe_price_id")
+    if not price_id:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Module '{body.module}' is not yet configured for individual purchase. "
+                   "Use a Pro or Business plan to access all modules.",
+        )
+
+    customer_id = await get_or_create_stripe_customer(current_user, db)
+
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        client_reference_id=str(current_user.id),
+        payment_method_types=["card"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="subscription",
+        success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL,
+        cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
+        subscription_data={
+            "metadata": {
+                "user_id": str(current_user.id),
+                "module": body.module,
+                "type": "module",
+            },
+        },
+    )
+    logger.info(
+        f"[billing] Module checkout session {session.id} created "
+        f"for user {current_user.id} module={body.module}"
+    )
+    return CheckoutResponse(url=session.url)
+
+
 async def create_portal_session(current_user: CurrentUser, db: DB):
     """Open Stripe Billing Portal so user can manage/cancel their subscription."""
     if not current_user.stripe_customer_id:

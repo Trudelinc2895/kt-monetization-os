@@ -58,6 +58,18 @@ class CheckoutRequest(BaseModel):
     interval: str = Field(default="monthly", pattern="^(monthly|yearly)$")
 
 
+class ModuleCheckoutRequest(BaseModel):
+    module: str = Field(..., description="Module slug (e.g. 'operator', 'ghost', 'content')")
+
+
+class ModulePublic(BaseModel):
+    slug: str
+    name: str
+    price_usd: int
+    description: str
+    available: bool  # True only if stripe_price_id is configured
+
+
 class CheckoutResponse(BaseModel):
     url: str
 
