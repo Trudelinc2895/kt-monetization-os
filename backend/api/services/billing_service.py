@@ -326,9 +326,21 @@ async def sync_subscription_from_stripe(
             stripe_sub["current_period_end"], tz=timezone.utc
         )
 
-    # Keep User.plan in sync
-    if stripe_sub["status"] == "active":
+    if stripe_sub.get("trial_end"):
+        sub.trial_end = datetime.fromtimestamp(stripe_sub["trial_end"], tz=timezone.utc)
+
+    # Sync billing interval from price recurring
+    if items:
+        interval = items[0].get("price", {}).get("recurring", {}).get("interval")
+        if interval:
+            sub.billing_interval = "yearly" if interval == "year" else "monthly"
+
+    # Keep User.plan in sync — trialing counts as active for feature access
+    if stripe_sub["status"] in ("active", "trialing"):
         user.plan = plan
+    elif stripe_sub["status"] in ("past_due",):
+        # past_due: keep plan but entitlements degrade (handled in compute_entitlements)
+        pass
     elif stripe_sub["status"] in ("canceled", "unpaid", "incomplete_expired"):
         user.plan = "free"
     db.add(user)
@@ -382,9 +394,17 @@ async def handle_checkout_completed(session: dict[str, Any], db: AsyncSession) -
         except (ValueError, TypeError):
             credits_to_add = 0
         if credits_to_add > 0:
-            user.credits = (user.credits or 0) + credits_to_add
-            db.add(user)
-            logger.info(f"[billing] Added {credits_to_add} credits to user {user_id} → total={user.credits}")
+            from api.services.credit_service import add_credits
+            idempotency_key = f"stripe_checkout_{session.get('id', '')}_{credits_to_add}"
+            await add_credits(
+                user_id=user_id,
+                amount=credits_to_add,
+                source="stripe_checkout",
+                db=db,
+                idempotency_key=idempotency_key,
+                note=f"Credit pack purchased via Stripe checkout {session.get('id', '')}",
+            )
+            logger.info(f"[billing] Added {credits_to_add} credits to user {user_id} via ledger")
             await _write_audit(db, user_id, "credits_purchased", f"+{credits_to_add} credits via Stripe")
 
     await db.commit()
@@ -442,15 +462,16 @@ def compute_entitlements(user: User, sub: Subscription | None, usage: dict | Non
     plan_key = user.plan if user.plan in PLANS_CONFIG else "free"
 
     # Degrade to free if subscription is in bad standing
-    if sub and sub.status in ("past_due", "canceled", "unpaid", "incomplete_expired"):
+    if sub and sub.status in ("canceled", "unpaid", "incomplete_expired"):
         plan_key = "free"
+    # past_due: keep current plan for grace period (Stripe retries automatically)
 
     plan_cfg = PLANS_CONFIG[plan_key]
     now = datetime.now(timezone.utc)
 
     is_sub_active = (
         sub is not None
-        and sub.status == "active"
+        and sub.status in ("active", "trialing", "past_due")
         and (sub.current_period_end is None or sub.current_period_end > now)
     )
     effective_status = "active" if (plan_key == "free" or is_sub_active) else (

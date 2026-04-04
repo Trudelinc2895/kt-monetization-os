@@ -66,6 +66,9 @@ class User(Base):
     notifications: Mapped[list[UserNotification]] = relationship(
         "UserNotification", back_populates="user", lazy="noload"
     )
+    credit_ledger: Mapped[list[CreditLedger]] = relationship(
+        "CreditLedger", back_populates="user", lazy="noload"
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email} plan={self.plan}>"
