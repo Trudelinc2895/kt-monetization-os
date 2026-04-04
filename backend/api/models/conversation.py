@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.database import Base
@@ -23,7 +24,7 @@ class Conversation(Base):
     module: Mapped[str] = mapped_column(String(50), nullable=False, default="operator", index=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # list of {role: str, content: str, ts: str}
-    messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    messages: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
 

@@ -7,16 +7,22 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from api.config import settings
 
-# psycopg3 async driver
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
+# SQLite (dev) uses NullPool and no pool_size/max_overflow
+# PostgreSQL (prod) uses connection pooling
 engine = create_async_engine(
     settings.DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
     echo=settings.APP_ENV == "development",
+    **(
+        {"poolclass": NullPool}
+        if _is_sqlite
+        else {"pool_size": 10, "max_overflow": 20, "pool_pre_ping": True}
+    ),
 )
 
 AsyncSessionLocal = async_sessionmaker(
