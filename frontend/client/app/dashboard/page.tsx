@@ -110,16 +110,16 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
             <StatCard label="Plan" value={entitlements.plan.toUpperCase()} />
             <StatCard
-              label="Modules actifs"
-              value={`${entitlements.modules.length}/10`}
+              label="Messages / mois"
+              value={entitlements.limits.ai_messages_per_month === -1 ? "∞" : String(entitlements.limits.ai_messages_per_month)}
             />
             <StatCard
-              label="Messages IA / mois"
-              value={entitlements.ai_messages_per_month === 999999 ? "∞" : String(entitlements.ai_messages_per_month)}
+              label="Crédits overage"
+              value={String(entitlements.credits)}
             />
             <StatCard
-              label="Sièges équipe"
-              value={String(entitlements.team_seats)}
+              label="Stockage"
+              value={`${entitlements.limits.storage_gb} GB`}
             />
           </div>
         )}
