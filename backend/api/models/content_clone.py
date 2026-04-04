@@ -7,7 +7,8 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.database import Base
@@ -29,7 +30,7 @@ class ContentClone(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     niche: Mapped[str | None] = mapped_column(Text, nullable=True)
     # dict with keys: tweet, linkedin, instagram, newsletter, video_script
-    formats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    formats: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

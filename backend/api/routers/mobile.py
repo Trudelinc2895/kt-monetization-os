@@ -341,11 +341,60 @@ async def get_vip_overview(current_user: CurrentUser, db: DB):
     sub = await get_active_subscription(current_user.id, db)
     entitlements = compute_entitlements(current_user, sub)
 
-    # TODO: replace with real metrics from DB once analytics module is built
+    from api.services.usage_service import get_monthly_usage
+    usage = await get_monthly_usage(current_user.id, db)
+
+    msg_limit = entitlements["limits"]["ai_messages_per_month"]
+    msg_used = usage.get("messages_count", 0)
+    msg_display = "∞" if msg_limit == -1 else str(msg_limit)
+    trend = "stable"
+    if msg_limit != -1 and msg_limit > 0:
+        ratio = msg_used / msg_limit
+        trend = "warning" if ratio >= 0.8 else ("critical" if ratio >= 1.0 else "stable")
+
     kpis = [
-        {"key": "plan", "label": "Plan actuel", "value": current_user.plan.upper(), "trend": "stable"},
-        {"key": "modules_available", "label": "Modules actifs", "value": entitlements["limits"]["active_modules"], "unit": "modules"},
-        {"key": "messages_limit", "label": "Messages / mois", "value": entitlements["limits"]["ai_messages_per_month"], "unit": "msgs"},
+        {
+            "key": "plan",
+            "label": "Plan actuel",
+            "value": current_user.plan.upper(),
+            "trend": "stable",
+        },
+        {
+            "key": "messages_used",
+            "label": "Messages utilisés ce mois",
+            "value": msg_used,
+            "limit": msg_display,
+            "unit": "msgs",
+            "trend": trend,
+        },
+        {
+            "key": "tokens_used",
+            "label": "Tokens consommés",
+            "value": usage.get("tokens_total", 0),
+            "unit": "tokens",
+            "trend": "stable",
+        },
+        {
+            "key": "cost_usd",
+            "label": "Coût IA ce mois",
+            "value": round(usage.get("cost_usd_total", 0.0), 4),
+            "unit": "USD",
+            "trend": "stable",
+        },
+        {
+            "key": "modules_available",
+            "label": "Modules actifs",
+            "value": entitlements["limits"]["active_modules"],
+            "unit": "modules",
+            "trend": "stable",
+        },
+        {
+            "key": "credits",
+            "label": "Crédits disponibles",
+            "value": getattr(current_user, "credits", 0),
+            "unit": "crédits",
+            "trend": "stable",
+        },
     ]
 
     alerts = []
