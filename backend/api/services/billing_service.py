@@ -541,6 +541,15 @@ async def handle_checkout_completed(session: dict[str, Any], db: AsyncSession) -
                 stripe_customer_id=customer_id,
                 db=db,
             )
+            try:
+                from prometheus_client import Counter
+                Counter(
+                    "kt_module_purchases_total",
+                    "Module subscription purchases completed",
+                    ["module"],
+                ).labels(module=module_slug).inc()
+            except Exception:
+                pass
 
     await db.commit()
 
