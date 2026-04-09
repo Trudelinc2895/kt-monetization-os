@@ -18,6 +18,7 @@ from typing import Any
 
 import stripe
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -524,6 +525,7 @@ async def handle_checkout_completed(session: dict[str, Any], db: AsyncSession) -
                 source="stripe_checkout",
                 db=db,
                 idempotency_key=idempotency_key,
+                reference=session.get("id", ""),
                 note=f"Credit pack purchased via Stripe checkout {session.get('id', '')}",
             )
             logger.info(f"[billing] Added {credits_to_add} credits to user {user_id} via ledger")
@@ -597,7 +599,11 @@ async def mark_event(
         error=error,
     )
     db.add(we)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Concurrent duplicate webhook insert: treat as idempotent replay.
+        await db.rollback()
 
 
 # ─── Entitlement computation — always from DB, never from client ──────────────

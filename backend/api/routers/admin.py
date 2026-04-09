@@ -27,7 +27,7 @@ from api.models.subscription import Subscription
 from api.models.user import User
 from api.models.webhook_event import WebhookEvent
 from api.services.billing_service import PLANS_CONFIG
-from api.services.credit_service import adjust_credits
+from api.services.credit_service import add_credits, adjust_credits, deduct_credits_by_user_id, get_balance
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,6 +41,18 @@ class CreditAdjustRequest(BaseModel):
 
 
 class PlanOverrideRequest(BaseModel):
+    plan: str
+    reason: str | None = None
+
+
+class AdminCreditMutationRequest(BaseModel):
+    user_id: uuid.UUID
+    amount: int
+    reason: str | None = None
+
+
+class AdminForcePlanRequest(BaseModel):
+    user_id: uuid.UUID
     plan: str
     reason: str | None = None
 
@@ -77,7 +89,7 @@ async def admin_list_users(
                 "email": u.email,
                 "full_name": u.full_name,
                 "plan": u.plan,
-                "credits": u.credits,
+                "credits": await get_balance(u.id, db),
                 "is_active": u.is_active,
                 "is_admin": getattr(u, "is_admin", False),
                 "stripe_customer_id": u.stripe_customer_id,
@@ -129,7 +141,7 @@ async def admin_get_user(
         "email": user.email,
         "full_name": user.full_name,
         "plan": user.plan,
-        "credits": user.credits,
+        "credits": await get_balance(user.id, db),
         "is_active": user.is_active,
         "is_admin": getattr(user, "is_admin", False),
         "stripe_customer_id": user.stripe_customer_id,
@@ -192,8 +204,65 @@ async def admin_override_plan(
     user.plan = body.plan
     db.add(user)
     await db.commit()
+    safe_plan_for_log = str(body.plan).replace("\r", "").replace("\n", "")
     logger.info("[admin] Plan override user=%s %s→%s by admin=%s reason=%s",
-                user_id, old_plan, body.plan, admin.email, body.reason)
+                user_id, old_plan, safe_plan_for_log, admin.email, body.reason)
+    return {"status": "ok", "old_plan": old_plan, "new_plan": body.plan}
+
+
+@router.get("/user/{user_id}")
+async def admin_get_user_alias(user_id: uuid.UUID, admin: AdminUser, db: DB):
+    """Compatibility endpoint requested by monetization backoffice spec."""
+    return await admin_get_user(user_id=user_id, admin=admin, db=db)
+
+
+@router.post("/credits/add")
+async def admin_add_credits(body: AdminCreditMutationRequest, admin: AdminUser, db: DB):
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be > 0")
+    entry = await add_credits(
+        user_id=body.user_id,
+        amount=body.amount,
+        source=f"admin:{admin.email}",
+        db=db,
+        note=body.reason or "Admin manual credit add",
+        reference=f"admin:{admin.id}",
+    )
+    return {"status": "ok", "balance_after": entry.balance_after}
+
+
+@router.post("/credits/deduct")
+async def admin_deduct_credits(body: AdminCreditMutationRequest, admin: AdminUser, db: DB):
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be > 0")
+    try:
+        entry = await deduct_credits_by_user_id(
+            user_id=body.user_id,
+            amount=body.amount,
+            reason=f"admin:{admin.email}",
+            db=db,
+            note=body.reason or "Admin manual credit deduction",
+            reference=f"admin:{admin.id}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "ok", "balance_after": entry.balance_after}
+
+
+@router.post("/force-plan")
+async def admin_force_plan(body: AdminForcePlanRequest, admin: AdminUser, db: DB):
+    result = await db.execute(select(User).where(User.id == body.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if body.plan not in PLANS_CONFIG:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {body.plan!r}")
+    old_plan = user.plan
+    user.plan = body.plan
+    db.add(user)
+    await db.commit()
+    safe_plan_for_log = str(body.plan).replace("\r", "").replace("\n", "")
+    logger.info("[admin] force-plan user=%s old=%s new=%s admin=%s", user.id, old_plan, safe_plan_for_log, admin.email)
     return {"status": "ok", "old_plan": old_plan, "new_plan": body.plan}
 
 

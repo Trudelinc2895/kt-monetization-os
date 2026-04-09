@@ -23,13 +23,14 @@ class CreditLedger(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
-    # "purchase" | "deduction" | "adjustment" | "refund" | "expiry"
-    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)  # purchase | usage | adjustment
     # Positive = credit in, negative = credit out
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     # Human-readable source: module name, addon slug, admin action, etc.
     source: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Business reference (stripe session id, usage event id, admin ticket, etc.)
+    reference: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     # For idempotent Stripe webhook credit adds — prevents double-crediting
     idempotency_key: Mapped[str | None] = mapped_column(
         String(128), nullable=True, unique=True, index=True

@@ -82,7 +82,7 @@ def is_access_granted(sub: Subscription | None) -> bool:
 
 # ─── Primary webhook event handler ───────────────────────────────────────────
 
-async def handle_subscription_event(stripe_event: dict[str, Any], db: AsyncSession) -> None:
+async def handle_subscription_update(stripe_event: dict[str, Any], db: AsyncSession) -> None:
     """
     Route a Stripe subscription-related event to the appropriate handler.
     Called from billing.py webhook handler.
@@ -102,10 +102,23 @@ async def handle_subscription_event(stripe_event: dict[str, Any], db: AsyncSessi
         "customer.subscription.updated",
         "customer.subscription.deleted",
     ):
-        await sync_subscription_from_stripe(stripe_sub, db)
+        sub = await sync_subscription_from_stripe(stripe_sub, db)
+        if sub is not None:
+            if stripe_sub.get("cancel_at_period_end"):
+                logger.info("[fsm] downgrade scheduled end_of_period sub=%s", stripe_sub.get("id"))
+            if event_type == "customer.subscription.updated" and stripe_sub.get("pending_update"):
+                logger.info("[fsm] pending downgrade captured sub=%s", stripe_sub.get("id"))
+            # upgrade path when subscription remains active and plan changed now
+            if event_type == "customer.subscription.updated" and stripe_sub.get("status") == "active":
+                logger.info("[fsm] immediate upgrade/renewal applied sub=%s", stripe_sub.get("id"))
         logger.info(f"[fsm] Handled {event_type} sub={stripe_sub.get('id')}")
     else:
         logger.debug(f"[fsm] Skipping unhandled event type: {event_type}")
+
+
+async def handle_subscription_event(stripe_event: dict[str, Any], db: AsyncSession) -> None:
+    """Backward-compatible alias."""
+    await handle_subscription_update(stripe_event, db)
 
 
 # ─── Trial handlers ────────────────────────────────────────────────────────────
