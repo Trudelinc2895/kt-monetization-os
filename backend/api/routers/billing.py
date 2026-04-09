@@ -613,5 +613,6 @@ async def stripe_webhook(
         await mark_event(event_id, event_type, "failed", error, db)
         # Return 200 to prevent Stripe from retrying non-retriable errors.
         # For transient DB errors, let it raise (Stripe will retry).
+        return {"received": True, "status": "failed", "type": event_type}
 
     return {"received": True, "status": "processed", "type": event_type}

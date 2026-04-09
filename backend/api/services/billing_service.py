@@ -18,6 +18,7 @@ from typing import Any
 
 import stripe
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -598,7 +599,11 @@ async def mark_event(
         error=error,
     )
     db.add(we)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Concurrent duplicate webhook insert: treat as idempotent replay.
+        await db.rollback()
 
 
 # ─── Entitlement computation — always from DB, never from client ──────────────

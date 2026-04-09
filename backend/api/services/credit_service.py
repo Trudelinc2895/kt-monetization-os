@@ -32,7 +32,7 @@ except Exception:
 
 
 async def _get_user_for_update(user_id: uuid.UUID, db: AsyncSession) -> User:
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError(f"User {user_id} not found")
@@ -43,7 +43,7 @@ async def get_balance(user_id: uuid.UUID, db: AsyncSession) -> int:
     result = await db.execute(
         select(CreditLedger.balance_after)
         .where(CreditLedger.user_id == user_id)
-        .order_by(CreditLedger.created_at.desc())
+        .order_by(CreditLedger.created_at.desc(), CreditLedger.id.desc())
         .limit(1)
     )
     latest = result.scalar_one_or_none()
