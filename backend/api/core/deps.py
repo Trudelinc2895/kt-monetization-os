@@ -94,6 +94,18 @@ async def get_admin_user(
     return user
 
 
+def require_admin():
+    """Dependency factory kept for explicit admin route requirements."""
+    async def _check(user: Annotated[User, Depends(get_current_active_user)]) -> User:
+        if not getattr(user, "is_admin", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required",
+            )
+        return user
+    return _check
+
+
 # Typed aliases for cleaner route signatures
 CurrentUser = Annotated[User, Depends(get_current_active_user)]
 DB = Annotated[AsyncSession, Depends(get_db)]

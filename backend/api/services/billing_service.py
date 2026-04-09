@@ -524,6 +524,7 @@ async def handle_checkout_completed(session: dict[str, Any], db: AsyncSession) -
                 source="stripe_checkout",
                 db=db,
                 idempotency_key=idempotency_key,
+                reference=session.get("id", ""),
                 note=f"Credit pack purchased via Stripe checkout {session.get('id', '')}",
             )
             logger.info(f"[billing] Added {credits_to_add} credits to user {user_id} via ledger")

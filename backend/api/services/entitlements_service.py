@@ -51,12 +51,14 @@ async def get_entitlements(user: User, db: AsyncSession) -> dict[str, Any]:
         compute_entitlements,
         get_active_subscription,
     )
+    from api.services.credit_service import get_balance
     from api.services.usage_service import get_monthly_usage
 
     sub = await get_active_subscription(user.id, db)
     usage = await get_monthly_usage(user.id, db)
 
     entitlements = compute_entitlements(user, sub, usage)
+    entitlements["credits"] = await get_balance(user.id, db)
     entitlements["usage"] = usage
     return entitlements
 

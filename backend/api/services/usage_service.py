@@ -9,7 +9,6 @@ source of truth. Never hardcode limits here.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -180,81 +179,17 @@ async def check_and_charge_usage(
     *,
     usage_type: str = "ai_message",
 ) -> tuple[bool, str]:
-    """
-    Full usage gate with overage credit fallback.
-
-    Args:
-        user: ORM User instance (must have .id, .plan, .credits attributes)
-        db: async SQLAlchemy session
-        usage_type: metered resource type (default "ai_message")
-                    Future: "api_call", "storage_gb", "automation_run"
-
-    Returns (allowed: bool, reason: str):
-      "within_limit"      — under plan quota, proceed normally
-      "unlimited"         — business plan, no cap
-      "credit_deducted"   — over quota, 1 overage credit deducted
-      "limit_exceeded"    — over quota, no credits or overage not enabled
-      "redis_unavailable" — Redis down, fail-open
-
-    Overage logic (revenue expansion):
-      When a user exceeds their monthly limit AND overage_allowed=True
-      AND they have credits, 1 credit is deducted per overage message.
-      Each credit = 1 overage message.
-
-    Side effects:
-      - Fires send_usage_alert() asynchronously when user hits 80% of limit.
-        Alert is only sent once (tracked via Redis flag).
-    """
-    from api.services.billing_service import has_feature  # avoid circular import
-
-    plan: str = getattr(user, "plan", "free")
-    user_id: uuid.UUID = getattr(user, "id")
-    user_email: str = getattr(user, "email", "")
-    user_name: str = getattr(user, "full_name", "") or user_email
-
-    limit = _get_plan_limit(plan)
-
-    if limit == -1:
-        return True, "unlimited"
+    """Backward-compatible wrapper to central usage_metering_service."""
+    from fastapi import HTTPException
+    from api.services.usage_metering_service import check_and_charge_usage as _metering_check
 
     try:
-        redis = await _get_redis()
-        raw = await redis.get(_month_key(user_id))
-        count = int(raw) if raw else 0
-    except Exception:
-        return True, "redis_unavailable"
-
-    # ── 80% alert trigger (fire-and-forget, once per month) ─────────────────
-    if limit > 0 and count >= int(limit * 0.8):
-        alert_key = f"usage_alert_sent:{user_id}:{datetime.now(timezone.utc).strftime('%Y-%m')}"
-        try:
-            already_sent = await redis.get(alert_key)
-            if not already_sent:
-                await redis.setex(alert_key, 35 * 24 * 3600, "1")
-                pct = min(100, int((count / limit) * 100))
-                from api.services.email_service import send_usage_alert
-                asyncio.create_task(send_usage_alert(user_email, user_name, pct, plan))
-        except Exception:
-            pass  # Never block on alert failure
-
-    if count < limit:
-        if _HAS_PROM:
-            _kt_messages_total.labels(plan=plan, module="gate", reason="within_limit").inc()
-        return True, "within_limit"
-
-    # ── Over limit — attempt overage credit deduction ────────────────────────
-    if has_feature(plan, "overage_allowed") and (getattr(user, "credits", 0) or 0) > 0:
-        from api.services.credit_service import deduct_credits
-        deducted = await deduct_credits(user, source=f"overage:{usage_type}", db=db)
-        if deducted:
-            if _HAS_PROM:
-                _kt_messages_total.labels(plan=plan, module="gate", reason="credit_deducted").inc()
-                _kt_overage_total.labels(plan=plan).inc()
-            return True, "credit_deducted"
-
-    if _HAS_PROM:
-        _kt_messages_total.labels(plan=plan, module="gate", reason="limit_exceeded").inc()
-    return False, "limit_exceeded"
+        allowed, reason, _ = await _metering_check(
+            user=user, usage_type=usage_type, quantity=1, db=db, module="gate"
+        )
+    except HTTPException:
+        return False, "limit_exceeded"
+    return allowed, reason
 
 
 async def get_usage_history(

@@ -47,18 +47,18 @@ from api.services.billing_service import (
     ADDONS_CONFIG,
     MODULES_CONFIG,
     PLANS_CONFIG,
-    compute_entitlements,
     get_active_subscription,
     get_or_create_stripe_customer,
     get_upsell_suggestion,
     handle_checkout_completed,
-    has_feature,
     is_event_processed,
     mark_event,
-    sync_subscription_from_stripe,
 )
-from api.services.email_service import send_billing_confirmation, send_payment_failed
+from api.services.credit_service import get_balance
+from api.services.entitlements_service import get_entitlements as get_user_entitlements
+from api.services.email_service import send_billing_confirmation
 from api.services.usage_service import get_monthly_usage
+from api.services.subscription_state_machine import handle_subscription_update
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,9 +212,7 @@ async def get_entitlements(current_user: CurrentUser, db: DB):
     Computed server-side from DB state — never trust client plan claims.
     Includes credits, feature gates, usage, and contextual upsell.
     """
-    sub = await get_active_subscription(current_user.id, db)
-    usage = await get_monthly_usage(current_user.id, db)
-    return compute_entitlements(current_user, sub, usage)
+    return await get_user_entitlements(current_user, db)
 
 
 @router.get("/usage", response_model=UsageResponse)
@@ -229,6 +227,7 @@ async def get_usage(current_user: CurrentUser, db: DB):
     limit = plan_cfg["limits"]["ai_messages_per_month"]
     count = usage["messages_count"]
     usage_pct = -1.0 if limit == -1 else round((count / limit) * 100, 1) if limit > 0 else 0.0
+    balance = await get_balance(current_user.id, db)
     return UsageResponse(
         month=usage["month"],
         messages_count=count,
@@ -236,7 +235,7 @@ async def get_usage(current_user: CurrentUser, db: DB):
         usage_pct=usage_pct,
         tokens_total=usage["tokens_total"],
         cost_usd_total=usage["cost_usd_total"],
-        credits_remaining=current_user.credits,
+        credits_remaining=balance,
     )
 
 
@@ -498,13 +497,15 @@ async def stripe_webhook(
         data = event["data"]["object"]
 
         if event_type == "checkout.session.completed":
+            logger.info("[webhook] mapping checkout.session.completed -> checkout handler")
             await handle_checkout_completed(data, db)
 
         elif event_type in (
             "customer.subscription.created",
             "customer.subscription.updated",
         ):
-            await sync_subscription_from_stripe(data, db)
+            logger.info("[webhook] mapping %s -> subscription state machine", event_type)
+            await handle_subscription_update(event, db)
 
             if event_type == "customer.subscription.created":
                 # Look up user email to send billing confirmation
@@ -528,7 +529,8 @@ async def stripe_webhook(
 
         elif event_type == "customer.subscription.deleted":
             # Subscription cancelled — sync status, user.plan → free
-            await sync_subscription_from_stripe(data, db)
+            logger.info("[webhook] mapping customer.subscription.deleted -> subscription state machine")
+            await handle_subscription_update(event, db)
 
         elif event_type == "invoice.payment_succeeded":
             # Renewal — subscription already updated by subscription.updated event
@@ -561,6 +563,7 @@ async def stripe_webhook(
                         .order_by(_Sub.created_at.desc()).limit(1)
                     )
                     sub = sub_result.scalar_one_or_none()
+                    logger.info("[webhook] mapping invoice.payment_failed -> handle_payment_failed")
                     await handle_payment_failed(user, sub, db)
             except Exception as _exc:
                 logger.warning("[webhook] Could not handle payment-failed: %s", _exc)
