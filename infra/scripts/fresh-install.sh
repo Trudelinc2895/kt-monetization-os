@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================
 # KT Monetization OS — Fresh Install Script
 # Run on a BRAND NEW Ubuntu 22.04 / 24.04 VPS
@@ -10,7 +10,7 @@
 #   # IP only (no domain yet):
 #   bash infra/scripts/fresh-install.sh
 # ============================================================
-set -e
+set -euo pipefail
 
 DOMAIN="${1:-}"
 ACME_EMAIL="${2:-}"
