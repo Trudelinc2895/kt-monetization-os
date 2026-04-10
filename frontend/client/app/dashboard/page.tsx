@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { getEntitlements, getModuleCatalog, type Entitlements } from "@/lib/api";
+import { Button, Card, Badge } from "@/components/ui";
 
 const MODULE_ICONS: Record<string, string> = {
   operator: "🤖",
@@ -39,39 +40,41 @@ export default function DashboardPage() {
 
   if (loading || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-purple-400 animate-pulse text-xl">Chargement...</div>
+      <div className="min-h-screen flex items-center justify-center bg-bg-base">
+        <div className="text-primary animate-pulse text-xl">Chargement...</div>
       </div>
     );
   }
 
-  const planColor = {
-    free: "text-gray-400",
-    starter: "text-blue-400",
-    pro: "text-purple-400",
-    business: "text-yellow-400",
-  }[user.plan] ?? "text-gray-400";
+  const planVariant: Record<string, "info" | "success" | "warning" | "danger"> = {
+    free: "info",
+    starter: "info",
+    pro: "success",
+    business: "warning",
+  };
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-bg-base">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur">
+      <header className="border-b border-ui-border bg-ui-surface/50 backdrop-blur">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-purple-400 font-bold text-xl">⚡ KT OS</span>
-            <span className="text-gray-600">|</span>
-            <span className="text-sm text-gray-400">{user.full_name || user.email}</span>
+            <span className="text-primary font-bold text-xl">⚡ KT OS</span>
+            <span className="text-text-muted">|</span>
+            <span className="text-sm text-text-secondary">{user.full_name || user.email}</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className={`text-sm font-semibold uppercase ${planColor}`}>
-              Plan {user.plan}
-            </span>
-            <button
+            <Badge variant={planVariant[user.plan] ?? "info"}>
+              Plan {user.plan.toUpperCase()}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={async () => { await logout(); router.push("/"); }}
-              className="text-sm text-gray-500 hover:text-red-400 transition"
+              className="text-text-muted hover:text-danger"
             >
               Déconnexion
-            </button>
+            </Button>
           </div>
         </div>
       </header>
@@ -80,24 +83,24 @@ export default function DashboardPage() {
         {/* Welcome + Quick Actions */}
         <div className="mb-10 flex flex-col md:flex-row md:items-center gap-6">
           <div className="flex-1">
-            <h1 className="text-3xl font-bold text-white mb-2">
+            <h1 className="text-3xl font-bold text-text-primary mb-2">
               Bienvenue, {user.full_name?.split(" ")[0] || "Champion"} 👋
             </h1>
-            <p className="text-gray-400">
+            <p className="text-text-secondary">
               Votre système de monétisation IA est actif.
             </p>
           </div>
           <div className="flex gap-3">
             <Link
               href="/dashboard/chat"
-              className="bg-purple-600 hover:bg-purple-500 text-white font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2"
+              className="bg-primary hover:bg-primary-hover text-white font-semibold px-5 py-3 rounded-xl transition flex items-center gap-2"
             >
               🤖 Lancer l&apos;IA
             </Link>
             {user.plan === "free" && (
               <Link
                 href="/dashboard/billing"
-                className="border border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10 font-semibold px-5 py-3 rounded-xl transition"
+                className="border border-warning/50 text-warning-text hover:bg-warning-muted font-semibold px-5 py-3 rounded-xl transition"
               >
                 ⚡ Upgrader
               </Link>
@@ -113,19 +116,13 @@ export default function DashboardPage() {
               label="Messages / mois"
               value={entitlements.limits.ai_messages_per_month === -1 ? "∞" : String(entitlements.limits.ai_messages_per_month)}
             />
-            <StatCard
-              label="Crédits overage"
-              value={String(entitlements.credits)}
-            />
-            <StatCard
-              label="Stockage"
-              value={`${entitlements.limits.storage_gb} GB`}
-            />
+            <StatCard label="Crédits overage" value={String(entitlements.credits)} />
+            <StatCard label="Stockage" value={entitlements.limits.storage_gb + " GB"} />
           </div>
         )}
 
         {/* Module Grid */}
-        <h2 className="text-xl font-bold text-white mb-5">🧩 Vos modules</h2>
+        <h2 className="text-xl font-bold text-text-primary mb-5">🧩 Vos modules</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {modules.map((mod) => (
             <ModuleCard key={mod.key} mod={mod} />
@@ -134,17 +131,17 @@ export default function DashboardPage() {
 
         {/* Upgrade CTA for free users */}
         {user.plan === "free" && (
-          <div className="mt-12 bg-gradient-to-r from-purple-900/30 to-indigo-900/30 border border-purple-700/50 rounded-2xl p-8 text-center">
+          <div className="mt-12 bg-primary-muted border border-primary/20 rounded-2xl p-8 text-center">
             <div className="text-4xl mb-3">⚡</div>
-            <h3 className="text-2xl font-bold text-white mb-2">
+            <h3 className="text-2xl font-bold text-text-primary mb-2">
               Débloquer tous les modules
             </h3>
-            <p className="text-gray-400 mb-6 max-w-md mx-auto">
+            <p className="text-text-secondary mb-6 max-w-md mx-auto">
               Accès complet à l&apos;IA Orchestrator, Ghost Agency, et 8 autres modules de monétisation.
             </p>
             <Link
               href="/dashboard/billing"
-              className="inline-block bg-purple-600 hover:bg-purple-500 text-white font-bold px-8 py-4 rounded-xl text-lg transition"
+              className="inline-block bg-primary hover:bg-primary-hover text-white font-bold px-8 py-4 rounded-xl text-lg transition"
             >
               Voir les plans →
             </Link>
@@ -157,10 +154,10 @@ export default function DashboardPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <div className="text-2xl font-bold text-white">{value}</div>
-      <div className="text-sm text-gray-500 mt-1">{label}</div>
-    </div>
+    <Card variant="outlined" padding="sm">
+      <div className="text-2xl font-bold text-text-primary">{value}</div>
+      <div className="text-sm text-text-muted mt-1">{label}</div>
+    </Card>
   );
 }
 
@@ -169,36 +166,33 @@ function ModuleCard({ mod }: {
 }) {
   const icon = MODULE_ICONS[mod.key] ?? "🔷";
   return (
-    <div
-      className={`bg-gray-900 border rounded-xl p-5 transition flex flex-col gap-3 ${
-        mod.is_available
-          ? "border-gray-700 hover:border-purple-600 cursor-pointer"
-          : "border-gray-800 opacity-40"
-      }`}
+    <Card
+      variant="outlined"
+      padding="sm"
+      className={"flex flex-col gap-3 transition " + (mod.is_available ? "hover:border-primary cursor-pointer" : "opacity-40")}
     >
       <div className="flex items-center gap-3">
         <span className="text-2xl">{icon}</span>
         {!mod.is_available && (
-          <span className="text-xs bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full ml-auto">
-            🔒 Locked
-          </span>
+          <Badge variant="warning" size="sm" className="ml-auto">🔒 Locked</Badge>
         )}
       </div>
       <div>
-        <div className="font-semibold text-white text-sm">{mod.name}</div>
-        <div className="text-xs text-gray-500 mt-1 line-clamp-2">{mod.description}</div>
+        <div className="font-semibold text-text-primary text-sm">{mod.name}</div>
+        <div className="text-xs text-text-muted mt-1 line-clamp-2">{mod.description}</div>
       </div>
       {mod.is_available && (
         <Link
-          href={mod.key === "operator" || mod.key === "ghost_agency" || mod.key === "decision_engine"
-            ? `/dashboard/chat?agent=${mod.key}`
-            : "/dashboard/chat"
+          href={
+            mod.key === "operator" || mod.key === "ghost_agency" || mod.key === "decision_engine"
+              ? "/dashboard/chat?agent=" + mod.key
+              : "/dashboard/chat"
           }
-          className="text-xs text-purple-400 hover:text-purple-300 mt-auto"
+          className="text-xs text-primary hover:text-primary-strong mt-auto"
         >
           Utiliser →
         </Link>
       )}
-    </div>
+    </Card>
   );
 }
