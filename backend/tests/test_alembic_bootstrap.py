@@ -3,6 +3,7 @@ from api.core.alembic_bootstrap import (
     INITIAL_SCHEMA_REVISION,
     TOTP_REVISION,
     resolve_legacy_revision,
+    select_revision_to_stamp,
 )
 
 
@@ -54,3 +55,15 @@ def test_resolve_legacy_revision_detects_head_from_email_verification_columns():
         )
         == HEAD_REVISION
     )
+
+
+def test_select_revision_to_stamp_for_unmanaged_database():
+    assert select_revision_to_stamp([], INITIAL_SCHEMA_REVISION) == INITIAL_SCHEMA_REVISION
+
+
+def test_select_revision_to_stamp_advances_stale_alembic_version():
+    assert select_revision_to_stamp([TOTP_REVISION], HEAD_REVISION) == HEAD_REVISION
+
+
+def test_select_revision_to_stamp_ignores_current_or_newer_revision():
+    assert select_revision_to_stamp([HEAD_REVISION], HEAD_REVISION) is None
