@@ -12,6 +12,11 @@ _HEAD_ONLY_COLUMNS = {
     "email_verification_token",
     "email_verification_expires",
 }
+_REVISION_ORDER = {
+    INITIAL_SCHEMA_REVISION: 0,
+    TOTP_REVISION: 1,
+    HEAD_REVISION: 2,
+}
 
 
 def resolve_legacy_revision(
@@ -32,3 +37,21 @@ def resolve_legacy_revision(
         return TOTP_REVISION
 
     return INITIAL_SCHEMA_REVISION
+
+
+def select_revision_to_stamp(
+    current_revisions: Iterable[str],
+    detected_revision: str | None,
+) -> str | None:
+    if detected_revision is None:
+        return None
+
+    current = [revision for revision in current_revisions if revision in _REVISION_ORDER]
+    if not current:
+        return detected_revision
+
+    highest_current = max(current, key=_REVISION_ORDER.__getitem__)
+    if _REVISION_ORDER[detected_revision] > _REVISION_ORDER[highest_current]:
+        return detected_revision
+
+    return None

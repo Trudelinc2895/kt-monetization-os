@@ -12,7 +12,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from api.config import settings  # noqa: E402
-from api.core.alembic_bootstrap import resolve_legacy_revision  # noqa: E402
+from api.core.alembic_bootstrap import (  # noqa: E402
+    resolve_legacy_revision,
+    select_revision_to_stamp,
+)
 
 
 def _get_alembic_config() -> AlembicConfig:
@@ -28,25 +31,30 @@ def main() -> int:
     with engine.connect() as conn:
         inspector = inspect(conn)
         table_names = set(inspector.get_table_names())
+        current_revisions: list[str] = []
 
         if "alembic_version" in table_names:
             version_rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-            if version_rows:
-                print(f"Alembic already tracked at {[row[0] for row in version_rows]}")
-                return 0
+            current_revisions = [row[0] for row in version_rows]
 
         user_columns = set()
         if "users" in table_names:
             user_columns = {column["name"] for column in inspector.get_columns("users")}
 
-    revision = resolve_legacy_revision(table_names, user_columns)
+    detected_revision = resolve_legacy_revision(table_names, user_columns)
+    revision = select_revision_to_stamp(current_revisions, detected_revision)
     if revision is None:
-        print("No legacy schema detected; no Alembic bootstrap needed.")
+        print(
+            "No Alembic bootstrap needed.",
+            f"current={current_revisions or ['<unmanaged>']}",
+            f"detected={detected_revision}",
+        )
         return 0
 
     print(
-        "Stamping legacy database before upgrade:",
+        "Stamping database before upgrade:",
         revision,
+        f"current={current_revisions or ['<unmanaged>']}",
         f"(tables={sorted(table_names)})",
     )
     command.stamp(_get_alembic_config(), revision)
