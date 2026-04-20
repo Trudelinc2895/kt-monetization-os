@@ -35,6 +35,9 @@ def verify_password(plain: str, hashed: str) -> bool:
             return _ph.verify(hashed, plain)
         except (VerifyMismatchError, VerificationError, InvalidHashError):
             return False
+        except Exception:
+            # Fail closed on any unexpected verifier/runtime issue instead of 500ing auth.
+            return False
     else:
         # Legacy bcrypt hash — still valid, will re-hash on next login
         try:
