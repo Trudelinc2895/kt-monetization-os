@@ -64,9 +64,9 @@ jobs:
 
             # Run migrations before starting the API
             docker compose -f infra/docker-compose.prod.yml --env-file .env \
-              run --rm api python scripts/ensure_alembic_state.py
+              run --rm -T api python scripts/ensure_alembic_state.py
             docker compose -f infra/docker-compose.prod.yml --env-file .env \
-              run --rm api alembic upgrade head
+              run --rm -T api alembic upgrade head
 
             PUBLIC_DOMAIN=$(grep '^DOMAIN=' .env | cut -d= -f2- || true)
             PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-nanovia.ca}
