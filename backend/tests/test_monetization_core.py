@@ -55,6 +55,40 @@ async def test_get_entitlements_adds_workspace_metadata():
 
 
 @pytest.mark.asyncio
+async def test_get_entitlements_uses_ledger_balance_for_credit_reads():
+    from api.services.entitlements_service import get_entitlements
+
+    user = type("UserLike", (), {"id": uuid.uuid4()})()
+    legacy_entitlements = {
+        "plan": "pro",
+        "features_enabled": {"automation": True, "overage_allowed": True},
+        "credits": 0,
+    }
+
+    with (
+        patch(
+            "api.services.billing_service.get_active_subscription",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "api.services.usage_service.get_monthly_usage",
+            new=AsyncMock(return_value={"messages_count": 0}),
+        ),
+        patch(
+            "api.services.billing_service.compute_entitlements",
+            return_value=legacy_entitlements.copy(),
+        ),
+        patch(
+            "api.services.credit_service.get_authoritative_credit_balance",
+            new=AsyncMock(return_value=9),
+        ),
+    ):
+        result = await get_entitlements(user, AsyncMock())
+
+    assert result["credits"] == 9
+
+
+@pytest.mark.asyncio
 async def test_can_use_feature_reads_centralized_entitlements():
     from api.core.monetization import canUseFeature
 
