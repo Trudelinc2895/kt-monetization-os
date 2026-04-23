@@ -1,6 +1,6 @@
 """
 backend/api/main.py
-KT Monetization OS — FastAPI production entry point
+Nanovia OS — FastAPI production entry point
 """
 from __future__ import annotations
 import base64 as _base64
@@ -18,8 +18,6 @@ import redis.asyncio as _aioredis
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from dotenv import load_dotenv
-load_dotenv(".env")
 from sqlalchemy import text
 
 from api.config import settings
@@ -28,6 +26,7 @@ from api.routers import auth, billing, modules, users, health, mobile, orchestra
 from api.routers import micro_saas, decision_engine, knowledge_weapon, digital_leverage, reverse_engineering, offer_generator, execution_service
 from api.routers import notifications
 from api.routers import admin
+from api.routers import admin_orchestrator
 from api.routers import team
 # Import models so Base knows about them before create_all
 import api.models  # noqa: F401
@@ -205,19 +204,72 @@ def _extract_sub(authorization: str | None) -> str | None:
 
 
 _RATE_SKIP_PREFIXES = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
-_AUTH_RATE_PATHS = {
-    "/api/v1/auth/login",
-    "/api/v1/auth/register",
-    "/api/v1/auth/forgot-password",
-    "/api/v1/auth/reset-password",
+_RATE_LIMIT_RULES: dict[str, dict[str, object]] = {
+    "/api/v1/auth/login": {"scope": "ip", "limit": 10, "window": 60, "bucket": "auth"},
+    "/api/v1/auth/register": {"scope": "ip", "limit": 10, "window": 60, "bucket": "auth"},
+    "/api/v1/auth/forgot-password": {"scope": "ip", "limit": 10, "window": 60, "bucket": "auth"},
+    "/api/v1/auth/reset-password": {"scope": "ip", "limit": 10, "window": 60, "bucket": "auth"},
+    "/api/v1/auth/refresh": {"scope": "ip", "limit": 20, "window": 60, "bucket": "refresh"},
+    "/api/v1/auth/resend-verification": {"scope": "ip", "limit": 5, "window": 300, "bucket": "verify"},
+    # Stricter limits for 2FA — prevents TOTP brute force (6-digit = 1M combos)
+    "/api/v1/auth/2fa/verify-login": {
+        "scope": "ip",
+        "limit": 5,
+        "window": 900,
+        "bucket": "2fa",
+        "detail": "Trop de tentatives. Réessaie dans 15 minutes.",
+    },
+    "/api/v1/auth/2fa/enable": {
+        "scope": "ip",
+        "limit": 5,
+        "window": 900,
+        "bucket": "2fa",
+        "detail": "Trop de tentatives. Réessaie dans 15 minutes.",
+    },
+    "/api/v1/auth/2fa/disable": {
+        "scope": "ip",
+        "limit": 5,
+        "window": 900,
+        "bucket": "2fa",
+        "detail": "Trop de tentatives. Réessaie dans 15 minutes.",
+    },
+    "/api/v1/billing/checkout-session": {
+        "scope": "user_or_ip",
+        "limit": 15,
+        "window": 60,
+        "bucket": "billing-checkout",
+    },
+    "/api/v1/billing/module-checkout-session": {
+        "scope": "user_or_ip",
+        "limit": 15,
+        "window": 60,
+        "bucket": "billing-module-checkout",
+    },
+    "/api/v1/billing/portal-session": {
+        "scope": "user_or_ip",
+        "limit": 15,
+        "window": 60,
+        "bucket": "billing-portal",
+    },
+    "/api/v1/billing/credits/purchase": {
+        "scope": "user_or_ip",
+        "limit": 10,
+        "window": 60,
+        "bucket": "billing-credits",
+    },
+    "/api/v1/billing/addon/checkout": {
+        "scope": "user_or_ip",
+        "limit": 10,
+        "window": 60,
+        "bucket": "billing-addon",
+    },
 }
 
-# Stricter limits for 2FA — prevents TOTP brute force (6-digit = 1M combos)
-_STRICT_RATE_PATHS = {
-    "/api/v1/auth/2fa/verify-login",
-    "/api/v1/auth/2fa/enable",
-    "/api/v1/auth/2fa/disable",
-}
+
+def _rate_limit_key(scope: str, bucket: str, ip: str, user_id: str | None) -> str:
+    if scope == "user_or_ip" and user_id:
+        return f"ratelimit:user:{user_id}:{bucket}"
+    return f"ratelimit:ip:{ip}:{bucket}"
 
 
 @app.middleware("http")
@@ -227,45 +279,39 @@ async def rate_limit(request: Request, call_next) -> Response:
         return await call_next(request)
 
     ip = (request.client.host if request.client else "unknown").replace(":", "_")
+    user_id = _extract_sub(request.headers.get("authorization"))
+    rule = _RATE_LIMIT_RULES.get(path)
 
-    if path in _STRICT_RATE_PATHS:
-        # 5 attempts per 15 min per IP — brute force TOTP protection
-        key = f"ratelimit:ip:{ip}:2fa"
-        limit = 5
-        try:
-            redis = await _get_redis()
-            count = await redis.incr(key)
-            if count == 1:
-                await redis.expire(key, 900)  # 15 minutes
-            if count > limit:
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": "Trop de tentatives. Réessaie dans 15 minutes."},
-                )
-        except Exception:
-            pass  # Redis unavailable — fail open
-        return await call_next(request)
-    elif path in _AUTH_RATE_PATHS:
-        key = f"ratelimit:ip:{ip}:auth"
-        limit = 10
+    if rule:
+        key = _rate_limit_key(
+            str(rule["scope"]),
+            str(rule["bucket"]),
+            ip,
+            user_id,
+        )
+        limit = int(rule["limit"])
+        window = int(rule["window"])
+        detail = str(rule.get("detail", f"Too many requests. Réessaie dans {window} secondes."))
+    elif path.startswith("/api/v1/admin"):
+        key = _rate_limit_key("user_or_ip", "admin", ip, user_id)
+        limit = 60
+        window = 60
+        detail = "Too many admin requests. Réessaie dans 60 secondes."
     else:
-        user_id = _extract_sub(request.headers.get("authorization"))
-        if user_id:
-            key = f"ratelimit:user:{user_id}"
-            limit = 100
-        else:
-            key = f"ratelimit:ip:{ip}"
-            limit = 30
+        key = _rate_limit_key("user_or_ip", "default", ip, user_id)
+        limit = 100 if user_id else 30
+        window = 60
+        detail = "Too many requests. Réessaie dans 60 secondes."
 
     try:
         redis = await _get_redis()
         count = await redis.incr(key)
         if count == 1:
-            await redis.expire(key, 60)
+            await redis.expire(key, window)
         if count > limit:
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Too many requests. Réessaie dans 60 secondes."},
+                content={"detail": detail},
             )
     except Exception:
         pass  # Redis unavailable — fail open
@@ -301,6 +347,7 @@ app.include_router(ghost_agency.router, prefix="/api/v1", tags=["ghost agency"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(admin_orchestrator.router, prefix="/api/v1/admin", tags=["admin-orchestrator"])
 app.include_router(team.router, prefix="/api/v1", tags=["team"])
 app.include_router(micro_saas.router, prefix="/api/v1", tags=["Micro-SaaS Builder"])
 app.include_router(decision_engine.router, prefix="/api/v1", tags=["Decision Engine"])

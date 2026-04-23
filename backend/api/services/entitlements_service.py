@@ -20,9 +20,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.models.user_module import UserModule
 from api.models.user import User
+from api.services.module_registry import canonicalize_module_slug, get_module_lookup_slugs
 
 
 # ─── Plan helpers ─────────────────────────────────────────────────────────────
@@ -61,6 +64,12 @@ async def get_entitlements(user: User, db: AsyncSession) -> dict[str, Any]:
     return entitlements
 
 
+async def get_effective_plan(user: User, db: AsyncSession) -> str:
+    """Return the effective plan after subscription-state degradation is applied."""
+    entitlements = await get_entitlements(user, db)
+    return str(entitlements["plan"])
+
+
 def can_use_feature(user: User, feature: str) -> bool:
     """
     Return True if the user's plan enables the given feature flag.
@@ -71,6 +80,42 @@ def can_use_feature(user: User, feature: str) -> bool:
     from api.services.billing_service import has_feature
     plan = get_active_plan(user)
     return has_feature(plan, feature)
+
+
+async def can_access_feature(user: User, feature: str, db: AsyncSession) -> bool:
+    """Return True when the effective entitlements enable the feature."""
+    entitlements = await get_entitlements(user, db)
+    return bool(entitlements["features_enabled"].get(feature, False))
+
+
+async def has_module_access(user: User, module_slug: str, db: AsyncSession) -> bool:
+    """
+    Return True if the user can access a module via plan inclusion or active
+    à-la-carte purchase.
+    """
+    from api.services.billing_service import MODULES_CONFIG
+
+    canonical_slug = canonicalize_module_slug(module_slug)
+    if not canonical_slug:
+        return False
+
+    module_cfg = MODULES_CONFIG.get(canonical_slug)
+    if not module_cfg:
+        return False
+
+    effective_plan = await get_effective_plan(user, db)
+    if effective_plan in module_cfg.get("included_in_plans", []):
+        return True
+
+    lookup_slugs = get_module_lookup_slugs(canonical_slug)
+    result = await db.execute(
+        select(UserModule).where(
+            UserModule.user_id == user.id,
+            UserModule.module_slug.in_(lookup_slugs),
+        )
+    )
+    module_access = result.scalar_one_or_none()
+    return bool(module_access and module_access.is_active())
 
 
 async def get_remaining_quota(
