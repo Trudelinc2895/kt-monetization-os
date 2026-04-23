@@ -8,16 +8,17 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.config import settings
-from api.core.deps import CurrentUser, DB
+from api.core.deps import CurrentUser, DB, require_feature, require_usage_budget
 from api.models.conversation import Conversation
 from api.services.billing_service import PLANS_CONFIG, get_active_subscription
-from api.services.usage_service import check_and_charge_usage, record_usage
+from api.services.usage_service import record_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,29 +42,19 @@ class OrchestrateResponse(BaseModel):
 
 
 @router.post("/orchestrate", response_model=OrchestrateResponse)
-async def orchestrate(body: OrchestrateRequest, current_user: CurrentUser, db: DB):
+async def orchestrate(
+    body: OrchestrateRequest,
+    current_user: CurrentUser,
+    db: DB,
+    _feature_access: Annotated[CurrentUser, Depends(require_feature("automation"))],
+    _usage_budget: Annotated[tuple[bool, str], Depends(require_usage_budget())],
+):
     """
     Universal AI entry point.
     - Routes to the right agent based on intent
     - Persists conversation history
     - Enforces plan limits
     """
-    # Enforce plan usage quota (overage → credit deduction)
-    allowed, reason = await check_and_charge_usage(current_user, db)
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="Limite mensuelle atteinte. Upgrade ton plan pour continuer.",
-        )
-
-    # Feature gate: orchestrator requires automation feature (pro+)
-    from api.services.billing_service import has_feature
-    if not has_feature(current_user.plan, "automation"):
-        raise HTTPException(
-            status_code=403,
-            detail="L'orchestrateur IA nécessite un plan Pro ou supérieur.",
-        )
-
     # Get or create conversation
     conversation_id = body.conversation_id
     conversation: Conversation | None = None

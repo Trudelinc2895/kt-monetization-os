@@ -544,6 +544,59 @@ export interface AdminMetrics {
   estimated_mrr_usd: number;
 }
 
+export interface AdminPrivateOrchestratorAccess {
+  admin_only: boolean;
+  feature_flagged: boolean;
+  public_saas_exposure: boolean;
+  destructive_merge_with_my_agent_hub: boolean;
+  requires_private_admin_surface: boolean;
+  production_ip_allowlist_required: boolean;
+}
+
+export interface AdminPrivateOrchestratorCapabilities {
+  agent_catalog_read: boolean;
+  upstream_health_read: boolean;
+  prompt_execution: boolean;
+  terminal_access: boolean;
+  filesystem_access: boolean;
+  browser_access: boolean;
+  billing_mutation: boolean;
+  user_impersonation: boolean;
+}
+
+export interface AdminPrivateOrchestratorUpstream {
+  ok: boolean;
+  status: string;
+  service: string | null;
+  version: string | null;
+  detail: string | null;
+}
+
+export interface AdminPrivateOrchestratorOverview {
+  context_key: string;
+  enabled: boolean;
+  release_stage: string;
+  access: AdminPrivateOrchestratorAccess;
+  capabilities: AdminPrivateOrchestratorCapabilities;
+  allowed_agent_keys: string[];
+  upstream: AdminPrivateOrchestratorUpstream;
+  endpoints: string[];
+  notes: string[];
+}
+
+export interface AdminPrivateOrchestratorAgent {
+  key: string;
+  name: string;
+  description: string;
+  allowed: boolean;
+}
+
+export interface AdminPrivateOrchestratorAgentsResponse {
+  enabled: boolean;
+  source: string;
+  agents: AdminPrivateOrchestratorAgent[];
+}
+
 export async function getAdminUsers(
   page = 1,
   per_page = 50,
@@ -590,6 +643,14 @@ export async function getAdminWebhooks(
 
 export async function getAdminMetrics(): Promise<AdminMetrics> {
   return apiFetch<AdminMetrics>("/api/v1/admin/metrics");
+}
+
+export async function getAdminPrivateOrchestratorOverview(): Promise<AdminPrivateOrchestratorOverview> {
+  return apiFetch<AdminPrivateOrchestratorOverview>("/api/v1/admin/orchestrator/overview");
+}
+
+export async function getAdminPrivateOrchestratorAgents(): Promise<AdminPrivateOrchestratorAgentsResponse> {
+  return apiFetch<AdminPrivateOrchestratorAgentsResponse>("/api/v1/admin/orchestrator/agents");
 }
 
 // ── Team ──────────────────────────────────────────────────────────────────────
