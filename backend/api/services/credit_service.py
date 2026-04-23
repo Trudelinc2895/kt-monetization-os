@@ -53,6 +53,11 @@ async def _get_authoritative_ledger_balance(user_id: uuid.UUID, db: AsyncSession
     return int(latest_entry.balance_after) if latest_entry is not None else 0
 
 
+async def get_authoritative_credit_balance(user_id: uuid.UUID, db: AsyncSession) -> int:
+    """Public read helper for business decisions that need the ledger source of truth."""
+    return await _get_authoritative_ledger_balance(user_id, db)
+
+
 async def _realign_credit_projections(user: User, db: AsyncSession) -> int:
     """
     Restore mutable projections from the ledger before any new mutation.

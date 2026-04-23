@@ -54,12 +54,14 @@ async def get_entitlements(user: User, db: AsyncSession) -> dict[str, Any]:
         compute_entitlements,
         get_active_subscription,
     )
+    from api.services.credit_service import get_authoritative_credit_balance
     from api.services.usage_service import get_monthly_usage
 
     sub = await get_active_subscription(user.id, db)
     usage = await get_monthly_usage(user.id, db)
 
     entitlements = compute_entitlements(user, sub, usage)
+    entitlements["credits"] = await get_authoritative_credit_balance(user.id, db)
     entitlements["usage"] = usage
     return entitlements
 
@@ -204,6 +206,7 @@ async def get_usage_snapshot(user: User, db: AsyncSession) -> dict[str, Any]:
         compute_entitlements,
         get_active_subscription,
     )
+    from api.services.credit_service import get_authoritative_credit_balance
     from api.services.usage_service import get_monthly_usage, get_module_breakdown
 
     # Parallel-friendly: run sub + usage queries together
@@ -212,12 +215,13 @@ async def get_usage_snapshot(user: User, db: AsyncSession) -> dict[str, Any]:
     breakdown = await get_module_breakdown(user.id, db, days=30)
 
     entitlements = compute_entitlements(user, sub, usage_month)
+    authoritative_credits = await get_authoritative_credit_balance(user.id, db)
     quota_ai = await get_remaining_quota(user, db, "ai_messages_per_month")
 
     return {
         "plan": entitlements["plan"],
         "status": entitlements["status"],
-        "credits": entitlements["credits"],
+        "credits": authoritative_credits,
         "quota": {
             "ai_messages": quota_ai,
         },

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.core.logging import get_request_id
 from api.core.monetization._workspace import ensure_owner_workspace
 from api.core.monetization.usage_metering_service import build_usage_event
 from api.models.usage_record import UsageRecord
@@ -90,6 +91,7 @@ async def record_usage(
     unit_cost_credits: 0 = within plan, 1 = 1 overage credit deducted.
     """
     cost = _COST_PER_TOKEN * tokens_used
+    request_id = request_id or (get_request_id() or None)
     if workspace_id is None or actor_user_id is None:
         user_result = await db.execute(select(User).where(User.id == user_id))
         usage_user = user_result.scalar_one_or_none()
@@ -115,7 +117,11 @@ async def record_usage(
         quantity=1,
         actor_id=str(actor_user_id or user_id),
         request_id=request_id,
-        idempotency_key=idempotency_key or f"usage-{uuid.uuid4()}",
+        idempotency_key=idempotency_key or (
+            f"usage:{workspace_id or user_id}:{module}:{request_id}"
+            if request_id
+            else f"usage-{uuid.uuid4()}"
+        ),
         cost=cost,
     )
     db.add(
@@ -223,6 +229,7 @@ async def check_and_charge_usage(
     db: AsyncSession,
     *,
     usage_type: str = "ai_message",
+    idempotency_key: str | None = None,
 ) -> tuple[bool, str]:
     """
     Full usage gate with overage credit fallback.
@@ -251,6 +258,10 @@ async def check_and_charge_usage(
         Alert is only sent once (tracked via Redis flag).
     """
     from api.services.billing_service import has_feature  # avoid circular import
+    from api.services.credit_service import (
+        deduct_credits,
+        get_authoritative_credit_balance,
+    )
 
     plan: str = getattr(user, "plan", "free")
     user_id: uuid.UUID = getattr(user, "id")
@@ -290,9 +301,19 @@ async def check_and_charge_usage(
         return True, "within_limit"
 
     # ── Over limit — attempt overage credit deduction ────────────────────────
-    if has_feature(plan, "overage_allowed") and (getattr(user, "credits", 0) or 0) > 0:
-        from api.services.credit_service import deduct_credits
-        deducted = await deduct_credits(user, source=f"overage:{usage_type}", db=db)
+    authoritative_credits = await get_authoritative_credit_balance(user_id, db)
+    overage_idempotency_key = idempotency_key or (
+        f"usage-gate:{user_id}:{usage_type}:{get_request_id()}"
+        if get_request_id()
+        else None
+    )
+    if has_feature(plan, "overage_allowed") and authoritative_credits > 0:
+        deducted = await deduct_credits(
+            user,
+            source=f"overage:{usage_type}",
+            db=db,
+            idempotency_key=overage_idempotency_key,
+        )
         if deducted:
             if _HAS_PROM:
                 _kt_messages_total.labels(plan=plan, module="gate", reason="credit_deducted").inc()
