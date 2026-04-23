@@ -1,8 +1,20 @@
 """backend/api/config.py — settings via env"""
 from __future__ import annotations
 
+import ipaddress
+from pathlib import Path
+
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_PLACEHOLDER_TOKENS = ("CHANGE_ME", "REPLACE_ME", "REPLACE_WITH", "GENERATE_WITH")
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def _looks_placeholder(value: str) -> bool:
+    upper = value.strip().upper()
+    return not upper or any(token in upper for token in _PLACEHOLDER_TOKENS)
 
 
 class Settings(BaseSettings):
@@ -17,6 +29,19 @@ class Settings(BaseSettings):
     API_BASE_URL: str = "http://127.0.0.1:8010"
     PUBLIC_WEB_URL: str = "http://127.0.0.1:3000"
     PRIVATE_ADMIN_URL: str = "http://127.0.0.1:3020"
+    PRIVATE_ORCHESTRATOR_ENABLED: bool = False
+    PRIVATE_ORCHESTRATOR_UPSTREAM_URL: str = "http://ai-orchestrator:8020"
+    PRIVATE_ORCHESTRATOR_ALLOWED_AGENTS_RAW: str = Field(
+        default="operator,ghost_agency,decision_engine",
+        validation_alias=AliasChoices(
+            "PRIVATE_ORCHESTRATOR_ALLOWED_AGENTS_RAW",
+            "PRIVATE_ORCHESTRATOR_ALLOWED_AGENTS",
+        ),
+    )
+    ADMIN_ALLOWED_IPS_RAW: str = Field(
+        default="",
+        validation_alias=AliasChoices("ADMIN_ALLOWED_IPS_RAW", "ADMIN_ALLOWED_IPS", "ADMIN_ALLOWED_IP"),
+    )
 
     DATABASE_URL: str
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -90,6 +115,22 @@ class Settings(BaseSettings):
         return sorted(origins)
 
     @property
+    def ADMIN_ALLOWED_IPS(self) -> list[str]:
+        return [
+            cidr.strip()
+            for cidr in self.ADMIN_ALLOWED_IPS_RAW.split(",")
+            if cidr and cidr.strip()
+        ]
+
+    @property
+    def PRIVATE_ORCHESTRATOR_ALLOWED_AGENTS(self) -> list[str]:
+        return [
+            slug.strip()
+            for slug in self.PRIVATE_ORCHESTRATOR_ALLOWED_AGENTS_RAW.split(",")
+            if slug and slug.strip()
+        ]
+
+    @property
     def STRIPE_CHECKOUT_SUCCESS_URL(self) -> str:
         return f"{self.PUBLIC_WEB_URL}/dashboard?checkout=success"
 
@@ -136,14 +177,45 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid}")
         return upper
 
+    @field_validator("ADMIN_ALLOWED_IPS_RAW")
+    @classmethod
+    def validate_admin_allowed_ips(cls, v: str) -> str:
+        if not v or _looks_placeholder(v):
+            return ""
+        items = [cidr.strip() for cidr in v.split(",") if cidr and cidr.strip()]
+        for cidr in items:
+            ipaddress.ip_network(cidr, strict=False)
+        return ",".join(items)
+
+    @field_validator("TOTP_ENCRYPTION_KEY")
+    @classmethod
+    def validate_totp_encryption_key(cls, v: str) -> str:
+        if not v or _looks_placeholder(v):
+            return ""
+        from cryptography.fernet import Fernet
+
+        try:
+            Fernet(v.encode())
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError("TOTP_ENCRYPTION_KEY must be a valid Fernet key") from exc
+        return v
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         if self.APP_ENV == "production":
             errors = []
+            if _looks_placeholder(self.JWT_SECRET_KEY):
+                errors.append("JWT_SECRET_KEY cannot use placeholder values in production")
             if not self.STRIPE_SECRET_KEY.startswith("sk_live_"):
                 errors.append("STRIPE_SECRET_KEY must be a live key (sk_live_...) in production")
             if not self.STRIPE_WEBHOOK_SECRET.startswith("whsec_"):
                 errors.append("STRIPE_WEBHOOK_SECRET must start with whsec_")
+            if not self.ADMIN_ALLOWED_IPS:
+                errors.append("ADMIN_ALLOWED_IPS/ADMIN_ALLOWED_IP is required in production")
+            if not self.TOTP_ENCRYPTION_KEY:
+                errors.append("TOTP_ENCRYPTION_KEY is required in production")
+            elif _looks_placeholder(self.TOTP_ENCRYPTION_KEY):
+                errors.append("TOTP_ENCRYPTION_KEY cannot use placeholder values in production")
             origins = self.ALLOWED_ORIGINS
             if "*" in origins:
                 errors.append("Wildcard CORS not allowed in production")
@@ -154,7 +226,11 @@ class Settings(BaseSettings):
                 raise ValueError("Production config errors:\n" + "\n".join(f"  - {e}" for e in errors))
         return self
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 settings = Settings()

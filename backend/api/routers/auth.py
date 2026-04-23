@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.core.deps import CurrentUser, DB
+from api.core.monetization._workspace import ensure_owner_workspace
 from api.core.security import (
     create_access_token,
     create_refresh_token,
@@ -96,6 +97,7 @@ async def register(body: RegisterRequest, request: Request, response: FastAPIRes
     )
     db.add(user)
     await db.flush()
+    await ensure_owner_workspace(user, db)
 
     # Generate email verification token
     verification_token = secrets.token_urlsafe(32)
@@ -306,7 +308,7 @@ async def setup_2fa(current_user: CurrentUser, db: DB):
     await db.commit()
 
     totp = pyotp.TOTP(secret)
-    issuer = "KT Monetization OS"
+    issuer = "Nanovia OS"
     uri = totp.provisioning_uri(name=current_user.email, issuer_name=issuer)
 
     try:
