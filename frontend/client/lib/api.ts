@@ -88,10 +88,6 @@ async function refreshAccessToken(): Promise<boolean> {
     if (!res.ok) return false;
     const data = await res.json();
     _accessToken = data.access_token;
-    // Backward compat: if server returns refresh_token in JSON (mobile clients), persist it
-    if (data.refresh_token) {
-      localStorage.setItem("refresh_token", data.refresh_token);
-    }
     return true;
   } catch {
     return false;
@@ -129,10 +125,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  // Only persist tokens if 2FA is NOT required
+  // Web keeps the access token in memory only; refresh stays in the httpOnly cookie.
   if (!data.requires_2fa && data.access_token) {
     setAccessToken(data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token ?? "");
   }
   return data;
 }
@@ -147,7 +142,6 @@ export async function verify2FALogin(
   });
   if (data.access_token) {
     setAccessToken(data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token ?? "");
   }
   return data;
 }
@@ -187,7 +181,6 @@ export async function register(
     body: JSON.stringify({ email, password, full_name }),
   });
   setAccessToken(data.access_token ?? null);
-  localStorage.setItem("refresh_token", data.refresh_token ?? "");
   return data;
 }
 
