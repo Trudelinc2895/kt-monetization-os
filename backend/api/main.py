@@ -3,6 +3,7 @@ backend/api/main.py
 Nanovia OS — FastAPI production entry point
 """
 from __future__ import annotations
+import asyncio
 import base64 as _base64
 import json as _json
 import logging
@@ -11,6 +12,10 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from urllib.parse import urlsplit, urlunsplit
+
+if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
@@ -43,6 +48,34 @@ except ImportError:
 
 _startup_logger = logging.getLogger("startup")
 _NON_PROD_ENVS = {"development", "test"}
+
+
+def _redact_connection_url(url: str) -> str:
+    """Remove credentials from connection URLs before logging or surfacing them."""
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return "<invalid-url>"
+
+    if not parsed.scheme or not parsed.netloc:
+        return url
+
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parsed.port}" if parsed.port else ""
+
+    if parsed.username is None and parsed.password is None:
+        netloc = parsed.netloc
+    else:
+        username = parsed.username or ""
+        if parsed.password is not None:
+            userinfo = f"{username}:***" if username else ":***"
+        else:
+            userinfo = username
+        netloc = f"{userinfo}@{host}{port}" if userinfo else f"{host}{port}"
+
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 def _validate_billing_startup_config() -> None:
@@ -124,15 +157,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # ── Redis health check ─────────────────────────────────────────────────────
     import logging as _log
     _redis_logger = _log.getLogger("startup")
+    _safe_redis_url = _redact_connection_url(settings.REDIS_URL)
     try:
         _r = _aioredis.from_url(settings.REDIS_URL, socket_connect_timeout=3)
         await _r.ping()
         await _r.aclose()
-        _redis_logger.info("[startup] Redis ✅ connected at %s", settings.REDIS_URL)
+        _redis_logger.info("[startup] Redis ✅ connected at %s", _safe_redis_url)
     except Exception as _redis_exc:
         if settings.APP_ENV == "production":
             raise RuntimeError(
-                f"FATAL: Redis unavailable in production ({settings.REDIS_URL}). "
+                f"FATAL: Redis unavailable in production ({_safe_redis_url}). "
                 "Set REDIS_URL or provide a reachable Redis instance."
             ) from _redis_exc
         else:
