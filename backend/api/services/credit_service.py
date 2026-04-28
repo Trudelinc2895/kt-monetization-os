@@ -186,6 +186,19 @@ async def deduct_credits(
     logger.info("[credits] -%d for user=%s balance=%d source=%s", amount, user.id, user.credits, source)
     if _HAS_PROM:
         _kt_credits_deducted.labels(reason=source).inc(amount)
+
+    # ── Low-credit alert: fire once when balance crosses below threshold ───────
+    _LOW_CREDIT_THRESHOLD = 3
+    if current_balance >= _LOW_CREDIT_THRESHOLD > next_balance:
+        import asyncio as _asyncio
+        try:
+            from api.services.email_service import send_low_credits
+            _asyncio.create_task(
+                send_low_credits(user.email, getattr(user, "full_name", None) or "", next_balance)
+            )
+        except Exception as _exc:
+            logger.warning("[credits] Could not queue low-credit alert for user=%s: %s", user.id, _exc)
+
     return True
 
 

@@ -662,6 +662,21 @@ async def process_stripe_event(
             except Exception as exc:
                 logger.warning("[webhook] Could not queue billing email: %s", exc)
 
+        if event_type == "customer.subscription.deleted":
+            try:
+                from api.services.email_service import send_subscription_cancelled
+
+                if user:
+                    plan_name = (
+                        data.get("metadata", {}).get("plan")
+                        or (user.plan or "free").capitalize()
+                    )
+                    asyncio.create_task(
+                        send_subscription_cancelled(user.email, user.full_name or "", plan_name)
+                    )
+            except Exception as exc:
+                logger.warning("[webhook] Could not queue cancellation email: %s", exc)
+
         return "processed"
 
     if event_type == "invoice.payment_succeeded":

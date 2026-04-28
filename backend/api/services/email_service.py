@@ -259,6 +259,33 @@ async def send_usage_alert(to: str, name: str, pct: int, plan: str) -> bool:
     return await _send(to, f"Alerte quota — {pct}% utilise ce mois", html)
 
 
+async def send_subscription_cancelled(to: str, name: str, plan: str) -> bool:
+    """Notify user their subscription has been cancelled."""
+    display = name or to
+    plan_display = plan.capitalize()
+    html = _wrap(f"""
+      <h1 style="margin:0 0 16px;color:#F9FAFB;font-size:24px;font-weight:800;">
+        Abonnement annulé
+      </h1>
+      <p style="margin:0 0 12px;">
+        Salut <strong style="color:#A78BFA;">{display}</strong>,
+      </p>
+      <p style="margin:0 0 12px;">
+        Ton abonnement <strong style="color:#F87171;">Plan {plan_display}</strong>
+        a été annulé. Tu garderas accès à tes fonctionnalités jusqu'à la fin
+        de ta période de facturation en cours.
+      </p>
+      <p style="margin:0 0 28px;">
+        Tu peux te réabonner à tout moment depuis ton tableau de bord.
+      </p>
+      {_btn(_DASHBOARD_URL + "/billing", "Gérer mon abonnement")}
+      <p style="margin:28px 0 0;color:#9CA3AF;font-size:13px;">
+        Une question ? Réponds à cet e-mail, nous sommes là pour toi.
+      </p>
+    """)
+    return await _send(to, "Abonnement Nanovia annulé", html)
+
+
 async def send_low_credits(to: str, name: str, balance: int) -> bool:
     """Notify user their overage credit balance is critically low (less than 3)."""
     display = name or to
