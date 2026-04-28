@@ -322,6 +322,18 @@ async def check_and_charge_usage(
 
     if _HAS_PROM:
         _kt_messages_total.labels(plan=plan, module="gate", reason="limit_exceeded").inc()
+
+    # ── Overage-blocked alert: fire once per month when access is hard-blocked ─
+    overage_blocked_key = f"overage_blocked_alert:{user_id}:{datetime.now(timezone.utc).strftime('%Y-%m')}"
+    try:
+        already_sent = await redis.get(overage_blocked_key)
+        if not already_sent:
+            await redis.setex(overage_blocked_key, 35 * 24 * 3600, "1")
+            from api.services.email_service import send_usage_alert
+            asyncio.create_task(send_usage_alert(user_email, user_name, 100, plan))
+    except Exception:
+        pass  # Never block on alert failure
+
     return False, "limit_exceeded"
 
 
