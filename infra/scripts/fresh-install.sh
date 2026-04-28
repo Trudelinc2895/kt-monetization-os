@@ -145,9 +145,9 @@ ALLOWED_ORIGINS_RAW=$ORIGINS
 APP_ENV=production
 
 # Database (PostgreSQL via Docker)
-DATABASE_URL=postgresql+psycopg://kt_user:\${POSTGRES_PASSWORD}@postgres:5432/kt_monetization
-POSTGRES_DB=kt_monetization
-POSTGRES_USER=kt_user
+DATABASE_URL=postgresql+psycopg://ktadmin:\${POSTGRES_PASSWORD}@postgres:5432/ktmonetization
+POSTGRES_DB=ktmonetization
+POSTGRES_USER=ktadmin
 POSTGRES_PASSWORD=$PG_PASS
 
 # Redis
