@@ -12,7 +12,7 @@
 vault kv put secret/nanovia \
   JWT_SECRET="REPLACE_WITH_openssl_rand_hex_32" \
   SECRET_KEY="REPLACE_WITH_openssl_rand_hex_32" \
-  DATABASE_URL="postgresql+psycopg://ktuser:REPLACE@postgres:5432/ktmonetization" \
+  DATABASE_URL="postgresql+psycopg://ktadmin:REPLACE@postgres:5432/ktmonetization" \
   REDIS_URL="redis://redis:6379/0" \
   OPENAI_API_KEY="sk-svcacct-REPLACE" \
   STRIPE_SECRET_KEY="sk_test_51TEr82ARjyNV3UuR_REPLACE" \

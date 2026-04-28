@@ -276,6 +276,17 @@ docker compose --env-file .env.dev -f infra/docker-compose.dev.yml up --build
 - PostgreSQL: `localhost:5432`
 - Redis: `localhost:6379`
 
+Or, use the `make` shortcuts (require Docker):
+
+```bash
+make dev-up          # Start the full dev stack (build + up)
+make dev-logs        # Live logs from all dev services
+make dev-logs-api    # Live logs from the API only
+make dev-migrate     # Run Alembic migrations in dev stack
+make dev-test        # Run backend pytest in dev stack
+make dev-down        # Stop and remove dev containers
+```
+
 This is the supported local workflow:
 - `frontend/client` serves both the user app and the current admin/operator routes.
 - `frontend/admin` stays a separate deploy stub and is not required for local development.
