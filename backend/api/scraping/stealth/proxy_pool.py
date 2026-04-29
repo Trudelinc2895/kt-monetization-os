@@ -1,8 +1,12 @@
 """backend/api/scraping/stealth/proxy_pool.py — Advanced proxy management with health checks."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyPool:
@@ -14,6 +18,7 @@ class ProxyPool:
         self._proxies: list[str] = list(proxy_list)
         self._dead: dict[str, float] = {}  # proxy → expiry timestamp
         self._index: int = 0
+        self._bg_task: asyncio.Task | None = None
 
     async def get_proxy(self) -> Optional[str]:
         """Return the next healthy proxy in round-robin order, or None if all are dead."""
@@ -44,6 +49,28 @@ class ProxyPool:
                         del self._dead[proxy]
             except Exception:
                 await self.mark_dead(proxy)
+
+    def start_background_healthcheck(self, interval_seconds: int = 300) -> asyncio.Task:
+        """Start a background asyncio task that periodically health-checks all proxies."""
+        async def _loop() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(interval_seconds)
+                    await self.health_check_all()
+                    now = time.time()
+                    alive = [p for p in self._proxies if p not in self._dead or self._dead[p] <= now]
+                    dead_count = len(self._proxies) - len(alive)
+                    logger.info(
+                        "[proxy_pool] healthcheck: %d alive, %d dead",
+                        len(alive),
+                        dead_count,
+                    )
+            except asyncio.CancelledError:
+                logger.info("[proxy_pool] background healthcheck cancelled")
+                return
+
+        self._bg_task = asyncio.create_task(_loop(), name="proxy_healthcheck")
+        return self._bg_task
 
 
 # Module-level singleton — lazy-initialised from settings on first use

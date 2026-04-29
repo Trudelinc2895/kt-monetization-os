@@ -54,6 +54,16 @@ except ImportError:
 _startup_logger = logging.getLogger("startup")
 _NON_PROD_ENVS = {"development", "test"}
 
+# ── Shutdown/drain state ───────────────────────────────────────────────────────
+_shutting_down: bool = False
+_inflight_count: int = 0
+_scheduler_tasks: list[asyncio.Task] = []
+_proxy_health_task: asyncio.Task | None = None
+
+# ── Scanner detection (in-process, per-IP) ────────────────────────────────────
+_scanner_hits: dict[str, list[float]] = {}   # ip → list of rate-limit hit timestamps
+_shadow_banned: dict[str, float] = {}         # ip → ban expiry monotonic timestamp
+
 
 def _redact_connection_url(url: str) -> str:
     """Remove credentials from connection URLs before logging or surfacing them."""
@@ -147,6 +157,8 @@ async def _ensure_expected_schema() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
+    global _shutting_down, _scheduler_tasks, _proxy_health_task
+
     scrape_worker_task: asyncio.Task | None = None
     print(f"[startup] {settings.APP_NAME} v{settings.APP_VERSION} env={settings.APP_ENV}")
     if settings.APP_ENV in _NON_PROD_ENVS:
@@ -186,14 +198,88 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         scrape_worker_task = asyncio.create_task(run_worker_forever())
         _startup_logger.info("[startup] scrape worker task started in API process")
 
+    # ── Start Playwright zombie killer ─────────────────────────────────────────
+    if settings.SCRAPING_ENABLED:
+        try:
+            from api.scraping.fetcher import _browser_pool
+            _browser_pool.start_zombie_killer()
+            _startup_logger.info("[startup] Playwright zombie killer started")
+        except Exception as _ze:
+            _startup_logger.warning("[startup] Could not start zombie killer: %s", _ze)
+
+    # ── Start proxy health check ───────────────────────────────────────────────
+    if getattr(settings, "SCRAPING_STEALTH_MODE", False):
+        try:
+            from api.scraping.stealth.proxy_pool import _get_pool
+            _pool = _get_pool()
+            if _pool is not None and _pool._proxies:
+                _proxy_health_task = _pool.start_background_healthcheck(interval_seconds=300)
+                _startup_logger.info("[startup] Proxy health check background task started")
+        except Exception as _pe:
+            _startup_logger.warning("[startup] Could not start proxy healthcheck: %s", _pe)
+
+    # ── Start background scheduler ─────────────────────────────────────────────
+    try:
+        from api.core.scheduler import start_scheduler
+        from api.database import AsyncSessionLocal
+        from contextlib import asynccontextmanager as _acm
+
+        @_acm
+        async def _db_factory():
+            async with AsyncSessionLocal() as session:
+                try:
+                    yield session
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        _scheduler_tasks = start_scheduler(_db_factory)
+        _startup_logger.info("[startup] Background scheduler started (%d tasks)", len(_scheduler_tasks))
+    except Exception as _se:
+        _startup_logger.warning("[startup] Scheduler failed to start: %s", _se)
+
     yield
 
+    # ── Graceful shutdown ──────────────────────────────────────────────────────
+    _shutting_down = True
+
+    # Cancel scrape worker
     if scrape_worker_task is not None:
         scrape_worker_task.cancel()
         try:
             await scrape_worker_task
         except asyncio.CancelledError:
             pass
+
+    # Cancel proxy health check
+    if _proxy_health_task is not None:
+        _proxy_health_task.cancel()
+        try:
+            await _proxy_health_task
+        except asyncio.CancelledError:
+            pass
+
+    # Cancel scheduler tasks
+    for task in _scheduler_tasks:
+        task.cancel()
+    if _scheduler_tasks:
+        await asyncio.gather(*_scheduler_tasks, return_exceptions=True)
+
+    # Drain in-flight requests (max 30s)
+    drain_deadline = time.monotonic() + 30
+    while _inflight_count > 0 and time.monotonic() < drain_deadline:
+        await asyncio.sleep(0.1)
+    if _inflight_count > 0:
+        _startup_logger.warning("[shutdown] %d in-flight requests still pending after drain", _inflight_count)
+
+    # Close Redis pool
+    if _redis_pool is not None:
+        try:
+            await _redis_pool.aclose()
+        except Exception:
+            pass
+
     print("[shutdown] clean exit")
 
 
@@ -218,10 +304,15 @@ app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.API_BODY_SIZE_LIM
 
 @app.middleware("http")
 async def request_meta(request: Request, call_next) -> Response:
+    global _inflight_count
     req_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
     set_request_id(req_id)
     start = time.perf_counter()
-    response: Response = await call_next(request)
+    _inflight_count += 1
+    try:
+        response: Response = await call_next(request)
+    finally:
+        _inflight_count -= 1
     ms = (time.perf_counter() - start) * 1000
     response.headers["X-Request-ID"] = req_id
     response.headers["X-Response-Time"] = f"{ms:.1f}ms"
@@ -237,7 +328,10 @@ async def _get_redis() -> _aioredis.Redis:
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = _aioredis.from_url(
-            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+            max_connections=50,
         )
     return _redis_pool
 
@@ -254,6 +348,23 @@ def _extract_sub(authorization: str | None) -> str | None:
         return str(payload["sub"])
     except Exception:
         return None
+
+
+def _get_load_multiplier() -> float:
+    """Return a throttle multiplier based on system load. 1.0 = normal, <1.0 = throttle."""
+    try:
+        import psutil
+        cpu = psutil.cpu_percent()
+        mem = psutil.virtual_memory().percent
+        if cpu > 90 or mem > 90:
+            return 0.25   # severe throttle
+        if cpu > 75 or mem > 80:
+            return 0.5    # moderate throttle
+        if cpu > 60 or mem > 70:
+            return 0.75   # mild throttle
+        return 1.0
+    except Exception:
+        return 1.0
 
 
 _RATE_SKIP_PREFIXES = ("/health", "/metrics", "/docs", "/openapi.json", "/redoc")
@@ -345,6 +456,12 @@ async def rate_limit(request: Request, call_next) -> Response:
 
     ip = (request.client.host if request.client else "unknown").replace(":", "_")
     user_id = _extract_sub(request.headers.get("authorization"))
+
+    # Shadow-ban check
+    ban_expiry = _shadow_banned.get(ip, 0)
+    if ban_expiry > time.monotonic():
+        return JSONResponse(status_code=429, content={"detail": "Too many requests."})
+
     rule = _RATE_LIMIT_RULES.get(path)
 
     if rule:
@@ -357,16 +474,29 @@ async def rate_limit(request: Request, call_next) -> Response:
         limit = int(rule["limit"])
         window = int(rule["window"])
         detail = str(rule.get("detail", f"Too many requests. Réessaie dans {window} secondes."))
+        bucket = str(rule["bucket"])
     elif path.startswith("/api/v1/admin"):
         key = _rate_limit_key("user_or_ip", "admin", ip, user_id)
         limit = 60
         window = 60
         detail = "Too many admin requests. Réessaie dans 60 secondes."
+        bucket = "admin"
     else:
         key = _rate_limit_key("user_or_ip", "default", ip, user_id)
         limit = 100 if user_id else 30
         window = 60
         detail = "Too many requests. Réessaie dans 60 secondes."
+        bucket = "default"
+
+    # Adaptive throttle based on system load
+    multiplier = _get_load_multiplier()
+    if multiplier < 1.0:
+        effective_limit = max(1, int(limit * multiplier))
+        logging.getLogger("rate_limit").info(
+            "adaptive_throttle ip=%s bucket=%s multiplier=%.2f limit=%d→%d",
+            ip, bucket, multiplier, limit, effective_limit,
+        )
+        limit = effective_limit
 
     try:
         redis = await _get_redis()
@@ -374,6 +504,24 @@ async def rate_limit(request: Request, call_next) -> Response:
         if count == 1:
             await redis.expire(key, window)
         if count > limit:
+            # Scanner detection: track rate-limit hits per IP
+            now = time.monotonic()
+            hits = _scanner_hits.get(ip, [])
+            hits = [t for t in hits if now - t < 60]  # 1-minute window
+            hits.append(now)
+            _scanner_hits[ip] = hits
+            if len(hits) >= 3:
+                logging.getLogger("security").warning(
+                    "potential_scanner",
+                    extra={
+                        "event": "potential_scanner",
+                        "ip": ip,
+                        "hit_count": len(hits),
+                        "bucket": bucket,
+                    },
+                )
+                # Shadow-ban for 5 minutes
+                _shadow_banned[ip] = now + 300
             return JSONResponse(
                 status_code=429,
                 content={"detail": detail},
