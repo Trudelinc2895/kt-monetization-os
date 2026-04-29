@@ -8,8 +8,10 @@ import {
   enable2FA,
   disable2FA,
   apiFetch,
+  downloadGdprExport,
   type TwoFASetupResponse,
 } from "@/lib/api";
+import { Button } from "@/components/ui";
 
 type Step = "idle" | "setup" | "verify" | "disable";
 
@@ -57,6 +59,7 @@ export default function SecurityPage() {
   const [showSecret, setShowSecret] = useState(false);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -320,6 +323,27 @@ export default function SecurityPage() {
               </span>
             </div>
           </div>
+        </div>
+
+        {/* GDPR Export */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-white mb-1">Exportation des données (RGPD)</h2>
+          <p className="text-sm text-gray-400 mb-4">
+            Télécharger une copie complète de toutes vos données personnelles : profil, abonnements, utilisation et transactions.
+          </p>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={async () => {
+              setExporting(true);
+              try { await downloadGdprExport(); }
+              catch { /* ignore */ }
+              finally { setExporting(false); }
+            }}
+            loading={exporting}
+          >
+            Télécharger mes données
+          </Button>
         </div>
 
         {/* Audit log */}

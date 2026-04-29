@@ -12,6 +12,8 @@ from api.models.usage_record import UsageRecord
 from api.models.credit_ledger import CreditLedger
 from api.models.team_member import TeamMember
 from api.models.user_module import UserModule
+from api.models.branding import Branding
+from api.models.custom_module import CustomModule
 from api.models.workspace_billing import (
     Addon,
     BillingCustomer,
@@ -41,6 +43,8 @@ __all__ = [
     "CreditLedger",
     "TeamMember",
     "UserModule",
+    "Branding",
+    "CustomModule",
     "Addon",
     "BillingCustomer",
     "CreditBalance",

@@ -131,6 +131,27 @@ export default function BillingPage() {
           <div className="rounded-lg bg-danger/10 border border-danger/30 text-danger-text p-3 text-sm">{error}</div>
         )}
 
+        {usage && usage.usage_pct >= 80 && (
+          <div className={`rounded-xl border p-4 flex items-start gap-3 ${
+            usage.usage_pct >= 95
+              ? "bg-red-900/20 border-red-700/40 text-red-300"
+              : "bg-yellow-900/20 border-yellow-700/40 text-yellow-300"
+          }`}>
+            <span className="text-lg">⚠️</span>
+            <div>
+              <p className="font-semibold text-sm">
+                {usage.usage_pct >= 95 ? "Limite presque atteinte!" : "Attention — utilisation élevée"}
+              </p>
+              <p className="text-xs mt-0.5 opacity-80">
+                Tu as utilisé {usage.usage_pct.toFixed(0)}% de ton quota mensuel.
+                {usage.usage_pct >= 95
+                  ? " Passe à un forfait supérieur pour éviter les interruptions."
+                  : " Surveille ta consommation ou envisage une mise à niveau."}
+              </p>
+            </div>
+          </div>
+        )}
+
         {upsell && (
           <div className="rounded-xl border border-primary/30 bg-primary-muted p-4">
             <p className="text-sm font-semibold text-text-primary">{upsell.headline}</p>
