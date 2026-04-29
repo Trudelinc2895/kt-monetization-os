@@ -53,3 +53,23 @@ spec:
               command: ["pgrep", "-f", "api.scraping.worker"]
             periodSeconds: 30
             failureThreshold: 3
+          startupProbe:
+            exec:
+              command: ["pgrep", "-f", "worker.py"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            failureThreshold: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
