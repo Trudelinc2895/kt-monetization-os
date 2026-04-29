@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getAdminWebhooks, type AdminWebhookEvent } from "@/lib/api";
+import { getAdminWebhooks, replayWebhook, type AdminWebhookEvent } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
   processed: "bg-green-900/40 text-green-400",
@@ -18,15 +18,35 @@ export default function AdminWebhooksPage() {
   const [webhooks, setWebhooks] = useState<AdminWebhookEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [replayingId, setReplayingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadWebhooks = () => {
     setLoading(true);
     setError(null);
     getAdminWebhooks(50)
       .then((res) => setWebhooks(res.webhooks))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadWebhooks();
   }, []);
+
+  const handleReplay = async (stripeEventId: string) => {
+    setReplayingId(stripeEventId);
+    setToast(null);
+    try {
+      await replayWebhook(stripeEventId);
+      setToast("✅ Événement rejoué avec succès.");
+      loadWebhooks();
+    } catch (e: unknown) {
+      setToast("❌ " + ((e as Error).message ?? "Erreur lors du rejeu."));
+    } finally {
+      setReplayingId(null);
+    }
+  };
 
   return (
     <div>
@@ -41,6 +61,12 @@ export default function AdminWebhooksPage() {
         </div>
       )}
 
+      {toast && (
+        <div className="bg-gray-800 border border-gray-700 text-gray-200 rounded-lg px-4 py-3 mb-4 text-sm">
+          {toast}
+        </div>
+      )}
+
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -50,18 +76,19 @@ export default function AdminWebhooksPage() {
               <th className="px-4 py-3 text-gray-500 font-medium">Status</th>
               <th className="px-4 py-3 text-gray-500 font-medium">Error</th>
               <th className="px-4 py-3 text-gray-500 font-medium">Processed At</th>
+              <th className="px-4 py-3 text-gray-500 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-gray-500 animate-pulse">
+                <td colSpan={6} className="px-4 py-10 text-center text-gray-500 animate-pulse">
                   Loading...
                 </td>
               </tr>
             ) : webhooks.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-gray-500">
+                <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
                   No webhook events.
                 </td>
               </tr>
@@ -88,6 +115,21 @@ export default function AdminWebhooksPage() {
                     {evt.processed_at
                       ? new Date(evt.processed_at).toLocaleString()
                       : "—"}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {(evt.status === "failed" || evt.status === "ignored") && (
+                      <button
+                        onClick={() => handleReplay(evt.stripe_event_id)}
+                        disabled={replayingId === evt.stripe_event_id}
+                        className="text-xs px-3 py-1 rounded-lg bg-purple-700/30 hover:bg-purple-700/60 text-purple-300 border border-purple-700/40 disabled:opacity-50 transition"
+                      >
+                        {replayingId === evt.stripe_event_id ? (
+                          <span className="animate-pulse">⏳</span>
+                        ) : (
+                          "Rejouer"
+                        )}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))

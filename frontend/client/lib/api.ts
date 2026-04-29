@@ -681,3 +681,64 @@ export async function removeTeamMember(memberId: string): Promise<void> {
   await apiFetch(`/api/v1/team/members/${memberId}`, { method: "DELETE" });
 }
 
+export async function replayWebhook(stripeEventId: string): Promise<{ status: string; event_type: string }> {
+  return apiFetch(`/api/v1/admin/webhooks/${encodeURIComponent(stripeEventId)}/reprocess`, { method: "POST" });
+}
+
+export async function downloadGdprExport(): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(resolveApiUrl("/api/v1/users/me/export-data"), { headers, credentials: "include" });
+  if (!res.ok) throw new Error("Export failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "nanovia-export.json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export interface BrandingSettings {
+  workspace_id: string;
+  company_name: string | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  accent_color: string | null;
+  support_email: string | null;
+  custom_domain: string | null;
+}
+
+export async function getBranding(): Promise<BrandingSettings> {
+  return apiFetch("/api/v1/admin/branding");
+}
+
+export async function updateBranding(data: Partial<BrandingSettings>): Promise<BrandingSettings> {
+  return apiFetch("/api/v1/admin/branding", { method: "PUT", body: JSON.stringify(data) });
+}
+
+export interface CustomModuleData {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  prompt_template: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export async function listCustomModules(): Promise<CustomModuleData[]> {
+  return apiFetch("/api/v1/modules/custom");
+}
+
+export async function createCustomModule(data: { name: string; description?: string; prompt_template: string }): Promise<CustomModuleData> {
+  return apiFetch("/api/v1/modules/custom", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function deleteCustomModule(id: string): Promise<void> {
+  return apiFetch(`/api/v1/modules/custom/${id}`, { method: "DELETE" });
+}
+

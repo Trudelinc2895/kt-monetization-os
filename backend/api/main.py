@@ -32,6 +32,8 @@ from api.routers import micro_saas, decision_engine, knowledge_weapon, digital_l
 from api.routers import notifications
 from api.routers import admin
 from api.routers import admin_orchestrator
+from api.routers import branding
+from api.routers import custom_modules
 from api.routers import team
 from api.routers import scrape
 from api.scraping.worker import run_worker_forever
@@ -399,6 +401,8 @@ app.include_router(analytics.router, prefix="/api/v1", tags=["analytics"])
 app.include_router(notifications.router, prefix="/api/v1", tags=["notifications"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(admin_orchestrator.router, prefix="/api/v1/admin", tags=["admin-orchestrator"])
+app.include_router(branding.router, prefix="/api/v1", tags=["branding"])
+app.include_router(custom_modules.router, prefix="/api/v1", tags=["custom-modules"])
 app.include_router(team.router, prefix="/api/v1", tags=["team"])
 app.include_router(micro_saas.router, prefix="/api/v1", tags=["Micro-SaaS Builder"])
 app.include_router(decision_engine.router, prefix="/api/v1", tags=["Decision Engine"])
