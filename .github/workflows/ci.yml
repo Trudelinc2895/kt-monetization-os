@@ -40,7 +40,7 @@ jobs:
           JWT_SECRET_KEY: testsecretkeyminimum32characters
           SECRET_KEY: testsecretkey
           JWT_ALGORITHM: HS256
-          STRIPE_SECRET_KEY: stripe_test_fake
+          STRIPE_SECRET_KEY: stripe_secret_fake
           STRIPE_WEBHOOK_SECRET: stripe_webhook_fake
           APP_ENV: test
         run: |

@@ -31,7 +31,7 @@ python stripe\setup_stripe.py
 
 **À faire ensuite :**
 - Copier les `STRIPE_PRICE_*` générés dans `.env.dev`, `.env.staging` ou `.env.production`
-- Garder `stripe_test_` en dev/staging et `stripe_live_` uniquement en prod
+- Garder des clés Stripe non-live en dev/staging et des clés live uniquement en prod
 
 ---
 

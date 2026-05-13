@@ -7,7 +7,7 @@
 #
 # Example:
 #   sudo bash infra/scripts/setup-deploy-user.sh \
-#     "<ed25519-public-key>... github-actions-deploy"
+#     "<ed25519-public-key> github-actions-deploy"
 #
 # RISK: This script restarts sshd at the end.
 # Verify that the deploy key works in a second terminal before exiting root session.

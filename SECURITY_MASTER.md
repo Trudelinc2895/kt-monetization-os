@@ -229,7 +229,7 @@ echo "Backup: $BACKUP_DIR/kt_db_$DATE.sql.gz.enc"
 
 ```
 SÉCURITÉ CODE
-  □ Pas de secrets dans le code (grep -r "sk_live" . = 0 résultats)
+  □ Pas de secrets dans le code (scan secret = 0 résultat)
   □ .env dans .gitignore
   □ Bandit = 0 issues High/Critical
   □ Safety = 0 vulnérabilités critiques
@@ -339,8 +339,8 @@ ACCÈS
 2. Récupérer nouveau mot de passe rescue depuis email OVH
 3. ssh root@167.114.155.166 (avec mot de passe rescue)
 4. mount /dev/sdb1 /mnt/vps
-5. # Ajouter clé SSH:
-   echo "<ed25519-public-key>...clé..." >> /mnt/vps/root/.ssh/authorized_keys
+5. # Ajouter la clé SSH publique de secours:
+   echo "$EMERGENCY_SSH_PUBLIC_KEY" >> /mnt/vps/root/.ssh/authorized_keys
 6. # Fix firewall si bloqué:
    chroot /mnt/vps systemctl disable nftables
    chroot /mnt/vps ufw allow 22
@@ -398,8 +398,8 @@ DOMAIN=
 SECRET_KEY=GENERATE_WITH_openssl_rand_hex_32
 DATABASE_URL=
 REDIS_URL=
-STRIPE_SECRET_KEY=stripe_live_REPLACE
-OPENAI_API_KEY=sk-REPLACE
+STRIPE_SECRET_KEY=REPLACE_WITH_STRIPE_SECRET_KEY
+OPENAI_API_KEY=REPLACE_WITH_OPENAI_API_KEY
 EOF
 
 # 4. Pre-commit hook (detect secrets)

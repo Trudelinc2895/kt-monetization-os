@@ -35,7 +35,7 @@ Tu travailles sur **Nanovia OS** — un SaaS IA à 10 modules sur nanovia.ca.
 - `restart: unless-stopped` sur tous les services
 
 ### Sécurité (BLOQUANT — ne jamais violer)
-- Zéro secret dans le code (pas de `stripe_live_`, `stripe_webhook_`, `-----BEGIN`)
+- Zéro secret dans le code (pas de clés live, webhook secrets ni blocs PEM)
 - Input validation stricte sur TOUS les endpoints (jamais de trust implicite)
 - SQL: ORM uniquement (SQLAlchemy) — jamais de `f"SELECT ... {user_input}"`
 - CORS: liste blanche explicite — jamais `allow_origins=["*"]` en prod

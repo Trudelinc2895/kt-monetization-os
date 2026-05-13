@@ -141,7 +141,7 @@ Fichier complet: `database/schema.sql`
 - Dependabot (auto-PRs)
 
 ### Politiques / Garde-fous
-- Jamais de stripe_live_ dans le repo
+- Jamais de clé live dans le repo
 - Jamais de .env committé (dans .gitignore)
 - Superadmin Kevin: SSH key + JWT séparé + IP whitelist
 - RGPD: DELETE CASCADE sur users, export endpoint
@@ -159,7 +159,7 @@ Fichier complet: `database/schema.sql`
 
 ### Setup Stripe
 ```bash
-# 1. Remplir .env avec stripe_test_...
+# 1. Remplir .env avec des clés Stripe de test
 # 2. Créer produits/prix/webhook:
 python stripe/setup_stripe.py
 # 3. Copier les IDs générés dans .env
@@ -310,7 +310,7 @@ main (prod stable)
 | APP_ENV | development | production |
 | DATABASE_URL | localhost:5432 | postgres:5432 (Docker) |
 | REDIS_URL | localhost:6379 | redis:6379 (Docker) |
-| STRIPE_SECRET_KEY | stripe_test_... | stripe_live_... (via Vault) |
+| STRIPE_SECRET_KEY | clé Stripe de test | clé Stripe live (via Vault) |
 | API_BASE_URL | http://127.0.0.1:8010 | https://api.tkverse.ca |
 
 Fichier de référence: `.env.example`

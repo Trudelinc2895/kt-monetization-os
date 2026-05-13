@@ -88,7 +88,7 @@ npm run start
 ### Écouter les webhooks en local
 ```powershell
 stripe listen --forward-to localhost:8010/api/v1/billing/webhook
-# Copier le "webhook signing secret" (stripe_webhook_...) dans .env → STRIPE_WEBHOOK_SECRET
+# Copier le webhook signing secret dans .env → STRIPE_WEBHOOK_SECRET
 ```
 
 ### Tester un paiement test
@@ -142,7 +142,7 @@ docker compose ps
   - `APP_DOMAIN`, `PUBLIC_IP`
   - `STAGING_BIND_ADDRESS`, `STAGING_WEB_PORT`, `STAGING_ADMIN_PORT`, `STAGING_API_PORT`, `STAGING_AI_PORT`
 - Garde-fous actuels du workflow :
-  - `production` exige `STRIPE_SECRET_KEY=stripe_live_...`
+  - `production` exige une clé Stripe live valide
   - `staging` refuse les clés Stripe live
   - `APP_RUNTIME_ENV_FILE` est réécrit vers `../.env.production` ou `../.env.staging`
 
@@ -155,7 +155,7 @@ ssh -L 13000:127.0.0.1:13000 -L 13020:127.0.0.1:13020 -L 18010:127.0.0.1:18010 d
 - Web staging : `http://127.0.0.1:13000`
 - Admin staging : `http://127.0.0.1:13020`
 - API staging : `http://127.0.0.1:18010`
-- Garder Stripe en `stripe_test_...` / `stripe_public_test_...` / `stripe_webhook_...`
+- Garder Stripe en mode test avec des clés non-live
 - En production, le frontend admin reste un service séparé mais n'est pas publié publiquement par le `Caddyfile` par défaut.
 
 ---
@@ -183,8 +183,8 @@ python scripts/check_health.py
 ```
 DATABASE_URL          → doit pointer vers postgres (prod) ou sqlite (dev)
 JWT_SECRET_KEY        → doit être long et aléatoire
-STRIPE_SECRET_KEY     → stripe_test_... (dev) ou stripe_live_... (prod)
-STRIPE_WEBHOOK_SECRET → stripe_webhook_... (obtenu via stripe listen ou dashboard)
+STRIPE_SECRET_KEY     → clé Stripe test (dev) ou live (prod)
+STRIPE_WEBHOOK_SECRET → webhook secret Stripe (stripe listen ou dashboard)
 PUBLIC_WEB_URL        → URL publique utilisée pour Stripe/email
 PRIVATE_ADMIN_URL     → URL/admin origin privé
 APP_RUNTIME_ENV_FILE  → ../.env.production ou ../.env.staging en Docker

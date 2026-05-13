@@ -5,7 +5,7 @@ set -e
 PUB="${ED25519_PUBKEY:-${1:-}}"
 
 if [ -z "$PUB" ]; then
-  echo "Usage: ED25519_PUBKEY='<ed25519-public-key>...' bash add-key.sh" >&2
+  echo "Usage: ED25519_PUBKEY='<ed25519-public-key>' bash add-key.sh" >&2
   exit 1
 fi
 
