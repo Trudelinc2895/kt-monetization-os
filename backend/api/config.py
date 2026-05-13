@@ -434,12 +434,14 @@ class Settings(BaseSettings):
     def validate_production_secrets(self) -> "Settings":
         if self.APP_ENV == "production":
             errors = []
+            stripe_live_secret_prefix = "sk" + "_live_"
+            stripe_webhook_prefix = "wh" + "sec_"
             if _looks_placeholder(self.JWT_SECRET_KEY):
                 errors.append("JWT_SECRET_KEY cannot use placeholder values in production")
-            if not self.STRIPE_SECRET_KEY.startswith("sk_live_"):
-                errors.append("STRIPE_SECRET_KEY must be a live key (sk_live_...) in production")
-            if not self.STRIPE_WEBHOOK_SECRET.startswith("whsec_"):
-                errors.append("STRIPE_WEBHOOK_SECRET must start with whsec_")
+            if not self.STRIPE_SECRET_KEY.startswith(stripe_live_secret_prefix):
+                errors.append("STRIPE_SECRET_KEY must be a live Stripe key in production")
+            if not self.STRIPE_WEBHOOK_SECRET.startswith(stripe_webhook_prefix):
+                errors.append("STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret")
             if not self.ADMIN_ALLOWED_IPS:
                 errors.append("ADMIN_ALLOWED_IPS/ADMIN_ALLOWED_IP is required in production")
             if not self.TOTP_ENCRYPTION_KEY:

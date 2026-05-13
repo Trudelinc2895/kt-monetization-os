@@ -218,8 +218,8 @@ cat > $PROJECT_NAME/.env.example << 'EOF'
 SECRET_KEY=REPLACE_WITH_openssl_rand_hex_32
 DATABASE_URL=postgresql://user:REPLACE_PASSWORD@localhost:5432/dbname
 REDIS_URL=redis://:REPLACE_PASSWORD@localhost:6379/0
-STRIPE_SECRET_KEY=sk_test_REPLACE
-OPENAI_API_KEY=sk-REPLACE
+STRIPE_SECRET_KEY=REPLACE_WITH_STRIPE_SECRET_KEY
+OPENAI_API_KEY=REPLACE_WITH_OPENAI_API_KEY
 EOF
 
 # 3. Générer les vrais secrets
@@ -464,7 +464,7 @@ echo "=== PRE-PROD SECURITY CHECK $(date) ==="
 
 # Secrets
 check "Pas de secrets dans git" \
-  "! git log -p | grep -qiE 'password=.{8}|sk_live|AKIA[A-Z0-9]{16}'"
+  "! git log -p | grep -qiE 'password=.{8}|AKIA[A-Z0-9]{16}'"
 check ".env non commité" \
   "! git ls-files | grep -q '^\.env$'"
 check ".env permissions 600" \

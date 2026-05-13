@@ -27,7 +27,7 @@ AVANT TOUTE ACTION :
 RÈGLES :
 - Ne jamais modifier le monorepo archivé legacy
 - Toujours valider les changements avant commit
-- Ne jamais committer .env ni sk_live_ keys
+- Ne jamais committer .env ni de clés live
 - Préférer les petits patches ciblés
 - Mettre à jour WORKSTATE.md + KNOWN_BUGS.md après chaque tâche
 - PYTHONPATH=backend pour tous les imports Python

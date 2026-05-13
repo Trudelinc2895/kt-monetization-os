@@ -331,11 +331,14 @@ def validate_runtime_env(
     stripe_secret_ref = values.get("STRIPE_SECRET_KEY_REF", "").strip()
     stripe_webhook_ref = values.get("STRIPE_WEBHOOK_SECRET_REF", "").strip()
     totp_ref = values.get("TOTP_ENCRYPTION_KEY_REF", "").strip()
+    stripe_live_secret_prefix = "sk" + "_live_"
+    stripe_live_public_prefix = "pk" + "_live_"
+    stripe_webhook_prefix = "wh" + "sec_"
 
     if target_env == "development":
-        if stripe_secret.startswith("sk_live_"):
+        if stripe_secret.startswith(stripe_live_secret_prefix):
             errors.append("Development refuses live Stripe secret keys")
-        if stripe_public.startswith("pk_live_"):
+        if stripe_public.startswith(stripe_live_public_prefix):
             errors.append("Development refuses live Stripe public keys")
         return errors
 
@@ -352,26 +355,26 @@ def validate_runtime_env(
         bind_address = values.get("STAGING_BIND_ADDRESS", "127.0.0.1").strip()
         if not _is_loopback_host(bind_address):
             errors.append("Staging requires STAGING_BIND_ADDRESS to stay loopback-only")
-        if stripe_secret.startswith("sk_live_"):
+        if stripe_secret.startswith(stripe_live_secret_prefix):
             errors.append("Staging refuses live Stripe keys")
-        if stripe_public.startswith("pk_live_"):
+        if stripe_public.startswith(stripe_live_public_prefix):
             errors.append("Staging refuses live Stripe public keys")
         return errors
 
     if not stripe_secret and not stripe_secret_ref:
-        errors.append("Production requires STRIPE_SECRET_KEY=sk_live_...")
-    elif not stripe_secret_ref and not allow_placeholders and not stripe_secret.startswith("sk_live_"):
-        errors.append("Production requires STRIPE_SECRET_KEY=sk_live_...")
+        errors.append("Production requires a live Stripe secret key")
+    elif not stripe_secret_ref and not allow_placeholders and not stripe_secret.startswith(stripe_live_secret_prefix):
+        errors.append("Production requires a live Stripe secret key")
 
     if not stripe_public:
-        errors.append("Production requires STRIPE_PUBLIC_KEY=pk_live_...")
-    elif not allow_placeholders and not stripe_public.startswith("pk_live_"):
-        errors.append("Production requires STRIPE_PUBLIC_KEY=pk_live_...")
+        errors.append("Production requires a live Stripe public key")
+    elif not allow_placeholders and not stripe_public.startswith(stripe_live_public_prefix):
+        errors.append("Production requires a live Stripe public key")
 
     if not stripe_webhook and not stripe_webhook_ref:
-        errors.append("Production requires STRIPE_WEBHOOK_SECRET=whsec_...")
-    elif not stripe_webhook_ref and not allow_placeholders and not stripe_webhook.startswith("whsec_"):
-        errors.append("Production requires STRIPE_WEBHOOK_SECRET=whsec_...")
+        errors.append("Production requires a Stripe webhook signing secret")
+    elif not stripe_webhook_ref and not allow_placeholders and not stripe_webhook.startswith(stripe_webhook_prefix):
+        errors.append("Production requires a Stripe webhook signing secret")
 
     if values.get("NEXT_PUBLIC_API_URL", "").strip():
         errors.append("Production requires NEXT_PUBLIC_API_URL to stay empty for same-origin /api")

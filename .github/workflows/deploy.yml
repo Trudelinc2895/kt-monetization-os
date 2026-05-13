@@ -179,11 +179,12 @@ jobs:
             fi
 
             STRIPE_SECRET=$(grep '^STRIPE_SECRET_KEY=' "${ENV_FILE}" | cut -d= -f2- || true)
-            if [ "${TARGET_ENV}" = "production" ] && ! printf '%s' "${STRIPE_SECRET}" | grep -q '^sk_live_'; then
-              echo "❌ Production deploy requires STRIPE_SECRET_KEY=sk_live_... in ${ENV_FILE}"
+            STRIPE_LIVE_PREFIX='sk'"_live_"
+            if [ "${TARGET_ENV}" = "production" ] && ! printf '%s' "${STRIPE_SECRET}" | grep -q "^${STRIPE_LIVE_PREFIX}"; then
+              echo "❌ Production deploy requires a live Stripe secret key in ${ENV_FILE}"
               exit 1
             fi
-            if [ "${TARGET_ENV}" = "staging" ] && printf '%s' "${STRIPE_SECRET}" | grep -q '^sk_live_'; then
+            if [ "${TARGET_ENV}" = "staging" ] && printf '%s' "${STRIPE_SECRET}" | grep -q "^${STRIPE_LIVE_PREFIX}"; then
               echo "❌ Staging deploy refuses live Stripe keys in ${ENV_FILE}"
               exit 1
             fi

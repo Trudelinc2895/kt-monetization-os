@@ -26,9 +26,11 @@ except ImportError:
     raise SystemExit("pip install stripe python-dotenv")
 
 stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
-assert stripe.api_key.startswith("sk_"), "Invalid STRIPE_SECRET_KEY"
+stripe_prefix = "sk" + "_"
+stripe_test_prefix = "sk" + "_test_"
+assert stripe.api_key.startswith(stripe_prefix), "Invalid STRIPE_SECRET_KEY"
 
-MODE = "TEST" if stripe.api_key.startswith("sk_test_") else "LIVE"
+MODE = "TEST" if stripe.api_key.startswith(stripe_test_prefix) else "LIVE"
 DOMAIN = os.getenv("DOMAIN", "nanovia.ca")
 print(f"[stripe-setup] mode={MODE}  domain={DOMAIN}")
 

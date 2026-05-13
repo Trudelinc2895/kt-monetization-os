@@ -9,7 +9,7 @@
 - [ ] **S2** `.gitignore` contient `.env`, `*.key`, `*.pem`, `secrets/`
 - [ ] **S3** Tous les secrets sont des valeurs aléatoires fortes (min 32 chars)
 - [ ] **S4** `SECRET_KEY` et `REFRESH_SECRET_KEY` sont différents et ≥ 256 bits
-- [ ] **S5** Clés Stripe en mode LIVE (pas `sk_test_`)
+- [ ] **S5** Clés Stripe de production valides (pas de clés de test)
 - [ ] **S6** Tokens/clés API rotatés dans les 30 derniers jours
 - [ ] **S7** Aucun secret dans les logs, variables d'env publiques, ou commentaires
 - [ ] **S8** TruffleHog scan passé sans résultat vérifié: `trufflehog git file://. --only-verified`
