@@ -2,7 +2,7 @@
     servers {
         trusted_proxies static private_ranges
     }
-    email {$ACME_EMAIL}
+    email {$ACME_EMAIL:admin@localhost}
 }
 
 (security_headers) {
@@ -33,30 +33,25 @@
     respond @bad_methods 405
 }
 
-(rate_limit_api) {
-    rate_limit {
-        zone api_zone {
-            key    {remote_host}
-            events 100
-            window 1m
-        }
-    }
-}
-
 (admin_ip_allow) {
     @not_allowed not remote_ip {$ADMIN_ALLOWED_IP}
     respond @not_allowed 403
 }
 
-# ── Canonical app site ────────────────────────────────────────────────────────
-{$DOMAIN}, www.{$DOMAIN} {
+# ── Public same-domain site ─────────────────────────────────────────────────
+{$DOMAIN:nanovia.ca}, {$WWW_DOMAIN:www.nanovia.ca} {
     import security_headers
     import block_attackers
 
-    @www host www.{$DOMAIN}
-    redir @www https://{$DOMAIN}{uri} permanent
-
     handle /api/* {
+        reverse_proxy api:8010
+    }
+
+    handle /metrics {
+        reverse_proxy api:8010
+    }
+
+    handle /health {
         reverse_proxy api:8010
     }
 
@@ -72,16 +67,7 @@
     }
 }
 
-# Dedicated api/admin/monitor hosts stay disabled in the default production
-# Caddyfile until their DNS records are confirmed live. The public app runs in
-# same-origin mode through {$DOMAIN} with /api/* proxied to FastAPI.
-
 # ── Raw IP behavior ────────────────────────────────────────────────────────────
 http://{$PUBLIC_IP} {
     redir https://{$DOMAIN}{uri} permanent
-}
-
-# ── Redirect HTTP → HTTPS (fallback) ─────────────────────────────────────────
-http:// {
-    redir https://{host}{uri} permanent
 }

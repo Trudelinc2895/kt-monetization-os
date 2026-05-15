@@ -23,8 +23,26 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+APP_ENV = os.getenv("APP_ENV", "development")
+
+
+def _parse_allowed_origins() -> list[str]:
+    raw = os.getenv("ALLOWED_ORIGINS_RAW", "")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if origins:
+        return origins
+    if APP_ENV in {"development", "test"}:
+        return ["http://localhost:3000", "http://localhost:3020"]
+    return []
+
+
 app = FastAPI(title="Nanovia AI Orchestrator", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_allowed_origins(),
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")

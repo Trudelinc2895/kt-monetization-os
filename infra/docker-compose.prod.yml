@@ -22,9 +22,9 @@ services:
       DOMAIN: ${DOMAIN:-localhost}
       ACME_EMAIL: ${ACME_EMAIL:-admin@localhost}
       PUBLIC_IP: ${PUBLIC_IP:-127.0.0.1}
-      # Restrict admin.{DOMAIN} to this IP (CIDR). Default = localhost only (fail-closed).
+      # Restrict private admin surfaces to this IP (CIDR). Default = localhost only.
       ADMIN_ALLOWED_IP: ${ADMIN_ALLOWED_IP:-127.0.0.1/32}
-    depends_on: [web, admin, api]
+    depends_on: [api]
     networks: [kt-net]
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]

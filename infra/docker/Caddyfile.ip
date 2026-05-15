@@ -28,6 +28,14 @@
         reverse_proxy api:8010
     }
 
+    handle /metrics {
+        reverse_proxy api:8010
+    }
+
+    handle /health {
+        reverse_proxy api:8010
+    }
+
     # All other traffic → Next.js frontend
     handle {
         reverse_proxy web:3000

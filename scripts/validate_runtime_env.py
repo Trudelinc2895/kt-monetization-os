@@ -32,10 +32,13 @@ _KNOWN_ENV_KEYS = {
     "API_PORT",
     "APP_ENV",
     "APP_NAME",
+    "APP_REGION",
     "APP_RUNTIME_ENV_FILE",
     "APP_VERSION",
+    "CHAOS_ENABLED",
     "DATABASE_URL",
     "DOMAIN",
+    "ENABLE_SCRAPE_PROXY",
     "GRAFANA_ADMIN_PASSWORD",
     "JWT_ACCESS_EXPIRE_MINUTES",
     "JWT_ALGORITHM",
@@ -65,6 +68,7 @@ _KNOWN_ENV_KEYS = {
     "PUBLIC_IP",
     "PUBLIC_WEB_URL",
     "RATE_LIMIT_PER_MINUTE",
+    "RATE_LIMIT_MAX_PER_DOMAIN",
     "REDIS_PASSWORD",
     "REDIS_PASSWORD_REF",
     "REDIS_URL",
@@ -74,6 +78,50 @@ _KNOWN_ENV_KEYS = {
     "RESEND_FROM_NAME",
     "SECRET_KEY",
     "SECRET_PROVIDER",
+    "SCRAPING_CLIENT_MAX_QUEUED_JOBS",
+    "SCRAPING_ALLOWLIST_RAW",
+    "SCRAPING_ALLOWED_CONTENT_TYPES_RAW",
+    "SCRAPING_BROWSER_POOL_SIZE",
+    "SCRAPING_CACHE_TTL_SECONDS",
+    "SCRAPING_CIRCUIT_FAIL_THRESHOLD",
+    "SCRAPING_CIRCUIT_OPEN_SECONDS",
+    "SCRAPING_CLIENT_DAILY_QUOTA",
+    "SCRAPING_DEDUPE_TTL_SECONDS",
+    "SCRAPING_ENABLED",
+    "SCRAPING_FEATURE_ASYNC_QUEUE_ENABLED",
+    "SCRAPING_FEATURE_BROWSER_ENABLED",
+    "SCRAPING_FEATURE_CACHE_FALLBACK_ENABLED",
+    "SCRAPING_FEATURE_PROXY_ENABLED",
+    "SCRAPING_JITTER_MAX_MS",
+    "SCRAPING_JITTER_MIN_MS",
+    "SCRAPING_JOB_TTL_SECONDS",
+    "SCRAPING_MAX_REDIRECTS",
+    "SCRAPING_MAX_RESPONSE_BYTES",
+    "SCRAPING_MODE_DEFAULT",
+    "SCRAPING_PROXY_BYPASS_DOMAINS_RAW",
+    "SCRAPING_PROXY_HEALTH_CHECK_INTERVAL_SECONDS",
+    "SCRAPING_PROXY_HEALTH_CHECK_URL",
+    "SCRAPING_PROXY_LIST_RAW",
+    "SCRAPING_PROXY_ROTATION_ENABLED",
+    "SCRAPING_QUEUE_MAX_DEPTH",
+    "SCRAPING_RATE_LIMIT_PER_DOMAIN_PER_MIN",
+    "SCRAPING_REQUIRE_AUTH",
+    "SCRAPING_RETRY_BACKOFF_BASE_MS",
+    "SCRAPING_RETRY_MAX_ATTEMPTS",
+    "SCRAPING_RUN_WORKER_IN_API",
+    "SCRAPING_STRICT_ALLOWLIST",
+    "SCRAPING_STEALTH_HEADER_ROTATION",
+    "SCRAPING_STEALTH_MODE",
+    "SCRAPING_STEALTH_PROFILE",
+    "SCRAPING_STEALTH_TIMEZONE",
+    "SCRAPING_STEALTH_VIEWPORT_HEIGHT",
+    "SCRAPING_STEALTH_VIEWPORT_WIDTH",
+    "SCRAPING_TIMEOUT_SECONDS",
+    "SCRAPING_WORKER_HEARTBEAT_INTERVAL_SECONDS",
+    "SCRAPING_WORKER_HEARTBEAT_TTL_SECONDS",
+    "SCRAPE_MAX_RETRIES",
+    "SCRAPE_TIMEOUT_MS",
+    "SCRAPE_TTL_SECONDS",
     "STAGING_ADMIN_PORT",
     "STAGING_AI_PORT",
     "STAGING_API_PORT",
@@ -376,8 +424,15 @@ def validate_runtime_env(
     elif not stripe_webhook_ref and not allow_placeholders and not stripe_webhook.startswith(stripe_webhook_prefix):
         errors.append("Production requires a Stripe webhook signing secret")
 
-    if values.get("NEXT_PUBLIC_API_URL", "").strip():
-        errors.append("Production requires NEXT_PUBLIC_API_URL to stay empty for same-origin /api")
+    next_public_api_url = values.get("NEXT_PUBLIC_API_URL", "").strip()
+    api_base_url = values.get("API_BASE_URL", "").strip()
+    if next_public_api_url:
+        if not next_public_api_url.startswith("https://"):
+            errors.append("Production NEXT_PUBLIC_API_URL must use https:// when set")
+        if "localhost" in next_public_api_url or "127.0.0.1" in next_public_api_url:
+            errors.append("Production NEXT_PUBLIC_API_URL cannot include localhost/127.0.0.1")
+        if api_base_url and not allow_placeholders and next_public_api_url != api_base_url:
+            errors.append("Production NEXT_PUBLIC_API_URL must match API_BASE_URL when set")
 
     admin_allowlist = _first_present(values, "ADMIN_ALLOWED_IPS_RAW", "ADMIN_ALLOWED_IPS", "ADMIN_ALLOWED_IP")
     if not admin_allowlist:

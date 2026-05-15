@@ -8,13 +8,14 @@ import base64 as _base64
 import json as _json
 import logging
 import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from urllib.parse import urlsplit, urlunsplit
 
-if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+if os.name == "nt" and sys.version_info < (3, 14) and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from alembic.config import Config as AlembicConfig
@@ -23,6 +24,7 @@ import redis.asyncio as _aioredis
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
 from api.config import settings
@@ -41,7 +43,7 @@ from api.middleware.body_limit import BodySizeLimitMiddleware
 # Import models so Base knows about them before create_all
 import api.models  # noqa: F401
 
-from api.core.logging import setup_logging, set_request_id
+from api.core.logging import clear_request_context, setup_logging, set_correlation_id, set_request_id
 setup_logging(level=settings.LOG_LEVEL if hasattr(settings, "LOG_LEVEL") else "INFO")
 
 try:
@@ -161,10 +163,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
     scrape_worker_task: asyncio.Task | None = None
     print(f"[startup] {settings.APP_NAME} v{settings.APP_VERSION} env={settings.APP_ENV}")
-    if settings.APP_ENV in _NON_PROD_ENVS:
+    if settings.APP_ENV in _NON_PROD_ENVS and settings.DATABASE_URL.startswith("sqlite"):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        print("[startup] DB tables ready (development create_all)")
+        print("[startup] DB tables ready (sqlite create_all)")
     else:
         await _ensure_expected_schema()
         _startup_logger.info("[startup] DB schema validated at Alembic head")
@@ -201,7 +203,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # ── Start Playwright zombie killer ─────────────────────────────────────────
     if settings.SCRAPING_ENABLED:
         try:
-            from api.scraping.fetcher import _browser_pool
+            from api.scraping.fetcher_browser import _browser_pool
             _browser_pool.start_zombie_killer()
             _startup_logger.info("[startup] Playwright zombie killer started")
         except Exception as _ze:
@@ -213,7 +215,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
             from api.scraping.stealth.proxy_pool import _get_pool
             _pool = _get_pool()
             if _pool is not None and _pool._proxies:
-                _proxy_health_task = _pool.start_background_healthcheck(interval_seconds=300)
+                _proxy_health_task = _pool.start_background_healthcheck(
+                    interval_seconds=settings.SCRAPING_PROXY_HEALTH_CHECK_INTERVAL_SECONDS,
+                )
                 _startup_logger.info("[startup] Proxy health check background task started")
         except Exception as _pe:
             _startup_logger.warning("[startup] Could not start proxy healthcheck: %s", _pe)
@@ -288,6 +292,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         except Exception:
             pass
 
+    try:
+        from api.scraping.store import close_redis as close_scraping_redis
+
+        await close_scraping_redis()
+    except Exception as exc:
+        _startup_logger.warning("[shutdown] Could not close scraping Redis pool: %s", exc)
+
+    try:
+        from api.services.usage_service import close_redis as close_usage_redis
+
+        await close_usage_redis()
+    except Exception as exc:
+        _startup_logger.warning("[shutdown] Could not close usage Redis pool: %s", exc)
+
     print("[shutdown] clean exit")
 
 
@@ -313,17 +331,46 @@ app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.API_BODY_SIZE_LIM
 @app.middleware("http")
 async def request_meta(request: Request, call_next) -> Response:
     global _inflight_count
-    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
+    req_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    correlation_id = request.headers.get("X-Correlation-ID") or req_id
     set_request_id(req_id)
+    set_correlation_id(correlation_id)
     start = time.perf_counter()
     _inflight_count += 1
+    response: Response | None = None
+    status_code = 500
     try:
         response: Response = await call_next(request)
+        status_code = response.status_code
+    except Exception:
+        status_code = 500
+        logging.getLogger("api.request").exception(
+            {
+                "event": "http_request_failed",
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": status_code,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 2),
+            }
+        )
+        clear_request_context()
+        raise
     finally:
         _inflight_count -= 1
     ms = (time.perf_counter() - start) * 1000
+    logging.getLogger("api.request").info(
+        {
+            "event": "http_request_completed",
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": status_code,
+            "duration_ms": round(ms, 2),
+        }
+    )
     response.headers["X-Request-ID"] = req_id
+    response.headers["X-Correlation-ID"] = correlation_id
     response.headers["X-Response-Time"] = f"{ms:.1f}ms"
+    clear_request_context()
     return response
 
 
@@ -360,6 +407,8 @@ def _extract_sub(authorization: str | None) -> str | None:
 
 def _get_load_multiplier() -> float:
     """Return a throttle multiplier based on system load. 1.0 = normal, <1.0 = throttle."""
+    if settings.APP_ENV in {"development", "test"}:
+        return 1.0
     try:
         import psutil
         cpu = psutil.cpu_percent()
@@ -554,7 +603,14 @@ async def security_headers(request: Request, call_next) -> Response:
 
 
 if HAS_PROMETHEUS:
-    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+    Instrumentator().instrument(app)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        from api.scraping.metrics import sync_runtime_metrics
+
+        await sync_runtime_metrics()
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 app.include_router(health.router, tags=["health"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])

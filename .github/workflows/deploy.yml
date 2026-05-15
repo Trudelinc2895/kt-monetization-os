@@ -135,6 +135,7 @@ jobs:
             if [ -z "${DOMAIN_VALUE}" ] && [ "${TARGET_ENV}" = "production" ]; then
               DOMAIN_VALUE="nanovia.ca"
             fi
+            DOMAIN_VALUE="${DOMAIN_VALUE#api.}"
             PUBLIC_IP_VALUE="${PUBLIC_IP:-}"
 
             if [ "${TARGET_ENV}" = "production" ]; then
@@ -147,10 +148,10 @@ jobs:
               if [ -n "${DOMAIN_VALUE}" ]; then
                 upsert_env "${ENV_FILE}" DOMAIN "${DOMAIN_VALUE}"
                 upsert_env "${ENV_FILE}" API_BASE_URL "https://${DOMAIN_VALUE}"
-                upsert_env "${ENV_FILE}" NEXT_PUBLIC_API_URL ""
+                upsert_env "${ENV_FILE}" NEXT_PUBLIC_API_URL "https://${DOMAIN_VALUE}"
                 upsert_env "${ENV_FILE}" PUBLIC_WEB_URL "https://${DOMAIN_VALUE}"
-                upsert_env "${ENV_FILE}" PRIVATE_ADMIN_URL "https://admin.${DOMAIN_VALUE}"
-                upsert_env "${ENV_FILE}" ALLOWED_ORIGINS_RAW "https://${DOMAIN_VALUE},https://www.${DOMAIN_VALUE},https://admin.${DOMAIN_VALUE}"
+                upsert_env "${ENV_FILE}" PRIVATE_ADMIN_URL "https://${DOMAIN_VALUE}"
+                upsert_env "${ENV_FILE}" ALLOWED_ORIGINS_RAW "https://${DOMAIN_VALUE},https://www.${DOMAIN_VALUE}"
               fi
             else
               STAGING_BIND_ADDRESS="${STAGING_BIND_ADDRESS:-127.0.0.1}"
@@ -204,14 +205,18 @@ jobs:
             PREV_API=$(docker inspect --format='{{.Id}}' "${COMPOSE_PROJECT}-api-1" 2>/dev/null || echo "none")
 
             compose up -d postgres redis
-            compose build api ai-orchestrator web admin
+            if [ "${TARGET_ENV}" = "production" ]; then
+              compose build api ai-orchestrator scraper-worker
+            else
+              compose build api ai-orchestrator scraper-worker web admin
+            fi
             compose run --rm -T api python scripts/ensure_alembic_state.py </dev/null
             compose run --rm -T api alembic upgrade head </dev/null
 
             if [ "${TARGET_ENV}" = "production" ]; then
-              compose up -d --force-recreate --no-deps caddy api ai-orchestrator web admin
+              compose up -d --force-recreate --no-deps caddy api ai-orchestrator scraper-worker
             else
-              compose up -d --force-recreate --no-deps --scale caddy=0 api ai-orchestrator web admin
+              compose up -d --force-recreate --no-deps --scale caddy=0 api ai-orchestrator scraper-worker web admin
             fi
 
             API_CONTAINER=$(compose ps -q api)
@@ -233,6 +238,7 @@ jobs:
             if [ "${TARGET_ENV}" = "production" ]; then
               PUBLIC_DOMAIN=$(grep '^DOMAIN=' "${ENV_FILE}" | cut -d= -f2- || true)
               PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-nanovia.ca}
+              PUBLIC_HOST="${PUBLIC_DOMAIN}"
 
               probe_caddy_from_api() {
                 local path="$1"
@@ -241,15 +247,15 @@ jobs:
 
               for i in $(seq 1 12); do
                 if [ "${EDGE_MODE}" = "ip" ]; then
-                  probe_caddy_from_api /api/v1/health/ready && break
+                  probe_caddy_from_api /health && break
                 else
-                  curl --connect-timeout 3 --max-time 5 -fsS -H "Host: ${PUBLIC_DOMAIN}" http://127.0.0.1/api/v1/health/ready && break
+                  curl --connect-timeout 3 --max-time 5 -fsS -H "Host: ${PUBLIC_HOST}" http://127.0.0.1/health && break
                 fi
 
                 if [ "${i}" -eq 12 ]; then
-                  echo "❌ Edge healthcheck failed after API became healthy for ${PUBLIC_DOMAIN} (mode=${EDGE_MODE})"
+                  echo "❌ Edge healthcheck failed after API became healthy for ${PUBLIC_HOST} (mode=${EDGE_MODE})"
                   compose ps
-                  compose logs --tail=200 caddy api web admin
+                  compose logs --tail=200 caddy api scraper-worker ai-orchestrator
                   exit 1
                 fi
 
@@ -257,28 +263,21 @@ jobs:
               done
 
               if [ "${EDGE_MODE}" = "ip" ]; then
-                probe_caddy_from_api /api/v1/health/public-entrypoint >/dev/null || {
-                  echo "❌ public-entrypoint smoke test failed for raw IP mode"
+                probe_caddy_from_api /api/v1/billing/plans >/dev/null || {
+                  echo "❌ billing plans smoke test failed for raw IP mode"
                   compose logs --tail=200 api caddy
                   exit 1
                 }
               else
-                curl --connect-timeout 3 --max-time 5 -fsS -H "Host: ${PUBLIC_DOMAIN}" http://127.0.0.1/api/v1/health/public-entrypoint >/dev/null || {
-                  echo "❌ public-entrypoint smoke test failed for ${PUBLIC_DOMAIN}"
+                curl --connect-timeout 3 --max-time 5 -fsS -H "Host: ${PUBLIC_HOST}" http://127.0.0.1/api/v1/billing/plans >/dev/null || {
+                  echo "❌ billing plans smoke test failed for ${PUBLIC_HOST}"
                   compose logs --tail=200 api caddy
                   exit 1
                 }
               fi
 
               printf 'EDGE_MODE=%s\n' "${EDGE_MODE}" >&2
-              printf 'PUBLIC_DOMAIN=%s\n' "${PUBLIC_DOMAIN}" >&2
-              if [ "${EDGE_MODE}" = "ip" ]; then
-                printf 'localhost title: skipped (ip mode host-port probe unreliable on current VPS)\n' >&2
-                printf 'domain title: skipped (ip mode)\n' >&2
-              else
-                printf 'localhost title: %s\n' "$(curl --connect-timeout 3 --max-time 5 -fsS http://127.0.0.1/login | tr '\n' ' ' | sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p')" >&2
-                printf 'domain title: %s\n' "$(curl --connect-timeout 3 --max-time 5 -fsS -H "Host: ${PUBLIC_DOMAIN}" http://127.0.0.1/login | tr '\n' ' ' | sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/p')" >&2
-              fi
+              printf 'PUBLIC_HOST=%s\n' "${PUBLIC_HOST}" >&2
             else
               curl --connect-timeout 3 --max-time 5 -fsS "http://${STAGING_BIND_ADDRESS}:${STAGING_API_PORT}/api/v1/health/ready" >/dev/null || {
                 echo "❌ staging API ready probe failed"

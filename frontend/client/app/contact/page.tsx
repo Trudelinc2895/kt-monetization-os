@@ -2,6 +2,8 @@
 import { useState } from "react";
 import Link from "next/link";
 
+import { resolveApiUrl } from "@/lib/api";
+
 export default function ContactPage() {
   const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -11,7 +13,7 @@ export default function ContactPage() {
     setStatus("sending");
     // Send to backend email service (or just mailto fallback for now)
     try {
-      const res = await fetch("/api/v1/contact", {
+      const res = await fetch(resolveApiUrl("/api/v1/contact"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),

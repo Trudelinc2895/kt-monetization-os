@@ -76,7 +76,7 @@ async def test_body_limit_passes_within_limit():
 async def test_proxy_pool_returns_none_when_empty():
     """ProxyPool with no proxies should return None."""
     from api.scraping.stealth.proxy_pool import ProxyPool
-    pool = ProxyPool([])
+    pool = ProxyPool([], healthcheck_url="https://health.example/ip")
     result = await pool.get_proxy()
     assert result is None
 
@@ -85,7 +85,7 @@ async def test_proxy_pool_returns_none_when_empty():
 async def test_proxy_pool_round_robin():
     """ProxyPool should cycle through proxies in order."""
     from api.scraping.stealth.proxy_pool import ProxyPool
-    pool = ProxyPool(["http://proxy1:3128", "http://proxy2:3128"])
+    pool = ProxyPool(["http://proxy1:3128", "http://proxy2:3128"], healthcheck_url="https://health.example/ip")
     first = await pool.get_proxy()
     second = await pool.get_proxy()
     assert first != second
@@ -95,7 +95,7 @@ async def test_proxy_pool_round_robin():
 async def test_proxy_pool_skips_dead_proxy():
     """ProxyPool should skip proxies marked as dead."""
     from api.scraping.stealth.proxy_pool import ProxyPool
-    pool = ProxyPool(["http://dead:3128", "http://alive:3128"])
+    pool = ProxyPool(["http://dead:3128", "http://alive:3128"], healthcheck_url="https://health.example/ip")
     await pool.mark_dead("http://dead:3128")
     result = await pool.get_proxy()
     assert result == "http://alive:3128"
@@ -105,7 +105,7 @@ async def test_proxy_pool_skips_dead_proxy():
 async def test_proxy_pool_returns_none_when_all_dead():
     """ProxyPool should return None when all proxies are dead."""
     from api.scraping.stealth.proxy_pool import ProxyPool
-    pool = ProxyPool(["http://proxy1:3128"])
+    pool = ProxyPool(["http://proxy1:3128"], healthcheck_url="https://health.example/ip")
     await pool.mark_dead("http://proxy1:3128")
     result = await pool.get_proxy()
     assert result is None
@@ -116,7 +116,7 @@ async def test_proxy_pool_mark_dead_sets_expiry():
     """mark_dead should add proxy to the dead set with a future expiry."""
     import time
     from api.scraping.stealth.proxy_pool import ProxyPool
-    pool = ProxyPool(["http://proxy1:3128"])
+    pool = ProxyPool(["http://proxy1:3128"], healthcheck_url="https://health.example/ip")
     await pool.mark_dead("http://proxy1:3128")
     assert "http://proxy1:3128" in pool._dead
     assert pool._dead["http://proxy1:3128"] > time.time()
@@ -155,6 +155,15 @@ def test_config_api_key_budgets_default_zero():
     assert settings.SCRAPING_API_KEY_DAILY_BUDGET == 0
 
 
+def test_load_multiplier_disabled_in_development(monkeypatch):
+    """Adaptive throttling should not shrink limits in development/test."""
+    from api.main import _get_load_multiplier
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    assert _get_load_multiplier() == 1.0
+
+
 # ── health — /live endpoint ───────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -166,3 +175,112 @@ async def test_live_endpoint_returns_200():
         response = await client.get("/live")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_ready_alias_returns_200_with_stubbed_dependencies(monkeypatch):
+    """GET /ready should mirror readiness without requiring real Redis/Postgres."""
+    import api.database as database_module
+    import redis.asyncio as aioredis
+    from httpx import ASGITransport, AsyncClient
+    from api.main import app
+
+    class _FakeDB:
+        async def execute(self, _query):
+            return 1
+
+    async def _fake_get_db():
+        yield _FakeDB()
+
+    class _FakeRedis:
+        async def ping(self):
+            return True
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(database_module, "get_db", _fake_get_db)
+    monkeypatch.setattr(aioredis, "from_url", lambda *_a, **_k: _FakeRedis())
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_ready_alias_returns_503_when_postgres_unavailable(monkeypatch):
+    """GET /ready should degrade when the database check fails."""
+    import api.database as database_module
+    import redis.asyncio as aioredis
+    from httpx import ASGITransport, AsyncClient
+    from api.main import app
+
+    async def _broken_get_db():
+        raise RuntimeError("postgres unavailable")
+        yield  # pragma: no cover
+
+    class _FakeRedis:
+        async def ping(self):
+            return True
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(database_module, "get_db", _broken_get_db)
+    monkeypatch.setattr(aioredis, "from_url", lambda *_a, **_k: _FakeRedis())
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_request_middleware_echoes_correlation_headers():
+    """Request middleware should surface trace and correlation identifiers to clients."""
+    from httpx import ASGITransport, AsyncClient
+    from api.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/health",
+            headers={"X-Request-ID": "trace-abc", "X-Correlation-ID": "corr-xyz"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "trace-abc"
+    assert response.headers["X-Correlation-ID"] == "corr-xyz"
+
+
+@pytest.mark.asyncio
+async def test_metrics_endpoint_exposes_worker_and_queue_metrics(monkeypatch):
+    """GET /metrics should include refreshed scrape runtime metrics."""
+    from httpx import ASGITransport, AsyncClient
+    from api.main import app
+    from api.scraping import store
+
+    async def _fake_queue_depth() -> int:
+        return 7
+
+    async def _fake_get_worker_heartbeats() -> list[dict[str, str]]:
+        return [
+            {
+                "worker_id": "worker-1",
+                "region": "us-east-1",
+                "status": "idle",
+                "updated_at": "1700000000",
+            }
+        ]
+
+    monkeypatch.setattr(store, "queue_depth", _fake_queue_depth)
+    monkeypatch.setattr(store, "get_worker_heartbeats", _fake_get_worker_heartbeats)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "scrape_queue_depth 7.0" in response.text
+    assert "scrape_worker_active 1.0" in response.text

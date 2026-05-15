@@ -31,6 +31,7 @@ async def ensure_owner_workspace(user: User, db: AsyncSession) -> Workspace:
             billing_email=user.email,
         )
         db.add(workspace)
+        await db.flush()
     else:
         workspace.active_plan_key = user.plan
         workspace.billing_email = user.email

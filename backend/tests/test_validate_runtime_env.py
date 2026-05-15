@@ -21,7 +21,7 @@ def test_production_runtime_env_requires_admin_allowlist_and_totp_key():
             "STRIPE_SECRET_KEY": "sk" + "_live_prod",
             "STRIPE_PUBLIC_KEY": "stripe_public_prod",
             "STRIPE_WEBHOOK_SECRET": "stripe_webhook_prod",
-            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://admin.nanovia.ca",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
             "NEXT_PUBLIC_API_URL": "",
         },
         target_env="production",
@@ -43,8 +43,11 @@ def test_production_runtime_env_accepts_safe_values():
             "STRIPE_PUBLIC_KEY": "pk" + "_live_prod",
             "STRIPE_WEBHOOK_SECRET": "wh" + "sec_prod",
             "ADMIN_ALLOWED_IP": "203.0.113.10/32",
-            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://admin.nanovia.ca",
-            "NEXT_PUBLIC_API_URL": "",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
+            "API_BASE_URL": "https://nanovia.ca",
+            "PUBLIC_WEB_URL": "https://nanovia.ca",
+            "PRIVATE_ADMIN_URL": "https://nanovia.ca",
+            "NEXT_PUBLIC_API_URL": "https://nanovia.ca",
         },
         target_env="production",
     )
@@ -126,11 +129,11 @@ def test_production_template_mode_allows_placeholders():
             "STRIPE_PUBLIC_KEY": "REPLACE_WITH_STRIPE_PUBLISHABLE_KEY",
             "STRIPE_WEBHOOK_SECRET": "REPLACE_WITH_STRIPE_WEBHOOK_SECRET",
             "ADMIN_ALLOWED_IP": "REPLACE_ME_ADMIN_CIDR",
-            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://admin.nanovia.ca",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
             "API_BASE_URL": "https://nanovia.ca",
             "PUBLIC_WEB_URL": "https://nanovia.ca",
-            "PRIVATE_ADMIN_URL": "https://admin.nanovia.ca",
-            "NEXT_PUBLIC_API_URL": "",
+            "PRIVATE_ADMIN_URL": "https://nanovia.ca",
+            "NEXT_PUBLIC_API_URL": "https://nanovia.ca",
         },
         target_env="production",
         allow_placeholders=True,
@@ -152,11 +155,11 @@ def test_runtime_env_accepts_vault_managed_secret_references():
             "STRIPE_WEBHOOK_SECRET_REF": "vault://secret/nanovia/backend#stripe_webhook_secret",
             "STRIPE_PUBLIC_KEY": "pk" + "_live_prod",
             "ADMIN_ALLOWED_IP": "203.0.113.10/32",
-            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://admin.nanovia.ca",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
             "API_BASE_URL": "https://nanovia.ca",
             "PUBLIC_WEB_URL": "https://nanovia.ca",
-            "PRIVATE_ADMIN_URL": "https://admin.nanovia.ca",
-            "NEXT_PUBLIC_API_URL": "",
+            "PRIVATE_ADMIN_URL": "https://nanovia.ca",
+            "NEXT_PUBLIC_API_URL": "https://nanovia.ca",
             "VAULT_ADDR": "http://127.0.0.1:8200",
             "VAULT_TOKEN": "vault-token",
         },
@@ -179,17 +182,41 @@ def test_runtime_env_requires_vault_token_when_secret_refs_are_enabled():
             "STRIPE_PUBLIC_KEY": "pk" + "_live_prod",
             "TOTP_ENCRYPTION_KEY_REF": "vault://secret/nanovia/backend#totp_encryption_key",
             "ADMIN_ALLOWED_IP": "203.0.113.10/32",
-            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://admin.nanovia.ca",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
             "API_BASE_URL": "https://nanovia.ca",
             "PUBLIC_WEB_URL": "https://nanovia.ca",
-            "PRIVATE_ADMIN_URL": "https://admin.nanovia.ca",
-            "NEXT_PUBLIC_API_URL": "",
+            "PRIVATE_ADMIN_URL": "https://nanovia.ca",
+            "NEXT_PUBLIC_API_URL": "https://nanovia.ca",
             "VAULT_ADDR": "http://127.0.0.1:8200",
         },
         target_env="production",
     )
 
     assert "VAULT_TOKEN is required when Vault-managed secrets are enabled" in errors
+
+
+def test_production_runtime_env_rejects_mismatched_frontend_api_url():
+    errors = validate_runtime_env(
+        {
+            "APP_ENV": "production",
+            "DATABASE_URL": "postgresql+psycopg://user:pass@postgres:5432/nanovia",
+            "REDIS_URL": "redis://redis:6379/0",
+            "JWT_SECRET_KEY": "x" * 40,
+            "TOTP_ENCRYPTION_KEY": "safe-fernet-key-placeholder-free",
+            "STRIPE_SECRET_KEY": "sk" + "_live_prod",
+            "STRIPE_PUBLIC_KEY": "pk" + "_live_prod",
+            "STRIPE_WEBHOOK_SECRET": "wh" + "sec_prod",
+            "ADMIN_ALLOWED_IP": "203.0.113.10/32",
+            "ALLOWED_ORIGINS_RAW": "https://nanovia.ca,https://www.nanovia.ca",
+            "API_BASE_URL": "https://nanovia.ca",
+            "PUBLIC_WEB_URL": "https://nanovia.ca",
+            "PRIVATE_ADMIN_URL": "https://nanovia.ca",
+            "NEXT_PUBLIC_API_URL": "https://preview-api.nanovia.ca",
+        },
+        target_env="production",
+    )
+
+    assert "Production NEXT_PUBLIC_API_URL must match API_BASE_URL when set" in errors
 
 
 def test_resolve_target_env_for_examples():

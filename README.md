@@ -398,7 +398,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8010
 NEXT_PUBLIC_PRIVATE_ORCHESTRATOR_ENABLED=false
 ```
 
-When `NEXT_PUBLIC_API_URL` is empty, the frontend uses same-origin `/api` rewrites. That is the default production-safe path and also works in the Docker dev stack.
+When `NEXT_PUBLIC_API_URL` is empty, the frontend uses same-origin `/api` rewrites. That works for local Docker and a same-origin VPS reverse proxy. For a 100% VPS production setup, set both `NEXT_PUBLIC_API_URL` and `API_BASE_URL` to `https://nanovia.ca`.
 
 ### Auto-setup Stripe Products
 
@@ -668,13 +668,15 @@ docker compose -p nanovia-staging -f infra/docker-compose.prod.yml -f infra/dock
 ### Architecture (Production)
 
 ```
-Internet → Caddy (TLS) → FastAPI :8010
-                       → Next.js :3000
+Browser → Caddy (TLS at https://nanovia.ca)
+        → /           → Next.js web :3000
+        → /api/*      → FastAPI :8010
 ```
 
-- The public app stays on `https://nanovia.ca` with same-origin `/api`.
-- The current admin/operator UI lives in `frontend/client/app/admin/*`.
-- The separate `admin` container remains a private operational stub in the stack, and the default production `Caddyfile` still does **not** publish a public `admin.` host yet.
+- The public frontend lives on `https://nanovia.ca` from `frontend/client`.
+- The public backend is exposed on the same origin under `https://nanovia.ca/api/*`.
+- The current admin/operator UI still lives in `frontend/client/app/admin/*`.
+- The separate `admin` container remains an optional private operational stub and the default production `Caddyfile` does **not** publish a public `admin.` host.
 
 ### Staging vs production on one OVH VPS
 

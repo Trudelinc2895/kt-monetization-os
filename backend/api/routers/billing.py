@@ -277,9 +277,8 @@ async def create_checkout_session(body: CheckoutRequest, current_user: CurrentUs
                    "Contacte le support.",
         )
 
-    customer_id = await get_or_create_stripe_customer(current_user, db)
-
     try:
+        customer_id = await get_or_create_stripe_customer(current_user, db)
         session = stripe.checkout.Session.create(
             customer=customer_id,
             client_reference_id=str(current_user.id),
@@ -327,9 +326,8 @@ async def create_module_checkout_session(
                    "Use a Pro or Business plan to access all modules.",
         )
 
-    customer_id = await get_or_create_stripe_customer(current_user, db)
-
     try:
+        customer_id = await get_or_create_stripe_customer(current_user, db)
         session = stripe.checkout.Session.create(
             customer=customer_id,
             client_reference_id=str(current_user.id),
@@ -366,10 +364,16 @@ async def create_portal_session(current_user: CurrentUser, db: DB):
             status_code=400,
             detail="No active subscription found. Subscribe first.",
         )
-    session = stripe.billing_portal.Session.create(
-        customer=current_user.stripe_customer_id,
-        return_url=settings.STRIPE_PORTAL_RETURN_URL,
-    )
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=current_user.stripe_customer_id,
+            return_url=settings.STRIPE_PORTAL_RETURN_URL,
+        )
+    except stripe.StripeError as exc:
+        logger.error("[billing] Stripe error creating portal session for user=%s: %s", current_user.id, exc)
+        if _HAS_PROM:
+            _payment_errors.labels(reason="stripe_api_error").inc()
+        raise HTTPException(status_code=503, detail="Erreur Stripe — réessaie dans quelques instants.")
     return PortalResponse(url=session.url)
 
 
@@ -384,19 +388,25 @@ async def purchase_credits(
     if not settings.STRIPE_CREDIT_PRICE_ID:
         raise HTTPException(status_code=503, detail="Credit purchases not configured.")
 
-    customer_id = await get_or_create_stripe_customer(current_user, db)
     credits_to_add = body.quantity * settings.STRIPE_CREDIT_PACK_SIZE
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        client_reference_id=str(current_user.id),
-        payment_method_types=["card"],
-        line_items=[{"price": settings.STRIPE_CREDIT_PRICE_ID, "quantity": body.quantity}],
-        mode="payment",
-        success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL + f"&credits={credits_to_add}",
-        cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
-        metadata={"type": "credits", "user_id": str(current_user.id), "credits": str(credits_to_add)},
-    )
+    try:
+        customer_id = await get_or_create_stripe_customer(current_user, db)
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            client_reference_id=str(current_user.id),
+            payment_method_types=["card"],
+            line_items=[{"price": settings.STRIPE_CREDIT_PRICE_ID, "quantity": body.quantity}],
+            mode="payment",
+            success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL + f"&credits={credits_to_add}",
+            cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
+            metadata={"type": "credits", "user_id": str(current_user.id), "credits": str(credits_to_add)},
+        )
+    except stripe.StripeError as exc:
+        logger.error("[billing] Stripe error creating credits checkout user=%s: %s", current_user.id, exc)
+        if _HAS_PROM:
+            _payment_errors.labels(reason="stripe_api_error").inc()
+        raise HTTPException(status_code=503, detail="Erreur Stripe — réessaie dans quelques instants.")
     return CreditPurchaseResponse(url=session.url, credits_to_add=credits_to_add)
 
 
@@ -431,24 +441,30 @@ async def addon_checkout(body: AddonCheckoutRequest, current_user: CurrentUser, 
             detail=f"Add-on '{body.addon}' not yet configured in Stripe.",
         )
 
-    customer_id = await get_or_create_stripe_customer(current_user, db)
     grants_json = str(addon_cfg["grants"])
 
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        client_reference_id=str(current_user.id),
-        payment_method_types=["card"],
-        line_items=[{"price": price_id, "quantity": 1}],
-        mode="payment",
-        success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL + f"&addon={body.addon}",
-        cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
-        metadata={
-            "type": "addon",
-            "addon_slug": body.addon,
-            "user_id": str(current_user.id),
-            "grants": grants_json,
-        },
-    )
+    try:
+        customer_id = await get_or_create_stripe_customer(current_user, db)
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            client_reference_id=str(current_user.id),
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="payment",
+            success_url=settings.STRIPE_CHECKOUT_SUCCESS_URL + f"&addon={body.addon}",
+            cancel_url=settings.STRIPE_CHECKOUT_CANCEL_URL,
+            metadata={
+                "type": "addon",
+                "addon_slug": body.addon,
+                "user_id": str(current_user.id),
+                "grants": grants_json,
+            },
+        )
+    except stripe.StripeError as exc:
+        logger.error("[billing] Stripe error creating addon checkout addon=%s user=%s: %s", body.addon, current_user.id, exc)
+        if _HAS_PROM:
+            _payment_errors.labels(reason="stripe_api_error").inc()
+        raise HTTPException(status_code=503, detail="Erreur Stripe — réessaie dans quelques instants.")
     return AddonCheckoutResponse(
         url=session.url,
         addon_name=addon_cfg["name"],
