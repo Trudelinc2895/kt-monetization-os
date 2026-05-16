@@ -9,13 +9,16 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
 spec:
   replicas: 2
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
   selector:
     matchLabels:
       app: nanovia-worker
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
+      maxUnavailable: 0
+      maxSurge: 1
   template:
     metadata:
       labels:
@@ -53,12 +56,22 @@ spec:
               command: ["pgrep", "-f", "api.scraping.worker"]
             periodSeconds: 30
             failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pgrep", "-f", "api.scraping.worker"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           startupProbe:
             exec:
               command: ["pgrep", "-f", "worker.py"]
             initialDelaySeconds: 5
             periodSeconds: 3
             failureThreshold: 20
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 15"]
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000

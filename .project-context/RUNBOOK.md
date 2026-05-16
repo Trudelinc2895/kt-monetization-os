@@ -293,22 +293,51 @@ ps aux | grep worker.py
 
 ### IR-3: Region Outage
 
-**Symptoms:** Requests from a geographic region timing out, CDN/edge returning 502/503.
+**Symptoms:** Requests from a geographic region timing out, CDN/edge returning 502/503, readiness failing in one region while another remains healthy.
 
 **Detection:**
 ```bash
-# Check multi-region routing (Cloudflare / AWS Route53 health checks)
+# Check edge / GeoDNS health checks
 curl -I https://nanovia.ca/api/v1/health/ready
-# Check from multiple regions via curl --resolve or external uptime monitor
+
+# Check region-specific endpoints if exposed
+curl -I https://api.nanovia.ca/api/v1/health/ready
+curl -I https://api-us.nanovia.ca/api/v1/health/ready
+
+# Check from multiple regions via external uptime monitor or CDN dashboard
 ```
 
+**Primary strategy:** `eu-west-1` is the primary write region. `us-east-1` is the warm fallback region. Redis queue/cache stays regional and must not be treated as a shared global dependency during failover.
+
 **Failover Steps:**
-1. Identify affected region via monitoring dashboard (Grafana → geo map)
-2. Update DNS/routing to bypass affected region (Cloudflare: disable affected origin)
-3. Scale up remaining regions: `kubectl scale deployment nanovia-api --replicas=6 -n nanovia`
-4. Open incident channel, notify stakeholders
-5. Monitor error rate dropping: Grafana → API error rate panel
-6. Once region recovered: restore DNS, scale down extra replicas
+1. Identify the failing region from Grafana / edge health checks and confirm the healthy region still answers `/api/v1/health/ready`.
+2. Remove the failing region from Cloudflare Load Balancer / Route53 routing pool.
+3. Keep failover DNS TTL low (`60s`) and confirm new traffic resolves to the fallback region only.
+4. Scale fallback capacity if needed:
+   - `kubectl scale deployment nanovia-api --replicas=6 -n nanovia`
+   - `kubectl scale deployment nanovia-worker --replicas=6 -n nanovia`
+5. Confirm fallback region uses its **local Redis** and does not depend on the failed region queue/cache.
+6. If the database primary is in the failed region, switch to the documented DB failover procedure before re-enabling write traffic.
+7. Open incident channel and notify stakeholders once failover is confirmed.
+8. Monitor error rate, readiness, queue depth, and worker throughput until stable.
+
+**Do not do during the first response window:**
+- Do not point fallback workers to Redis in the failed region.
+- Do not enable active/active writes between regions.
+- Do not restore the failed region to rotation until readiness and latency stay stable through the cooldown window.
+
+**Failback Steps:**
+1. Verify the recovered region is healthy for at least `300s`.
+2. Re-enable routing with low weight first.
+3. Confirm no elevated 5xx, queue backlog, or cross-region dependency errors.
+4. Restore normal routing weights.
+5. Scale temporary extra replicas back down if no longer needed.
+
+**Conceptual validation for Phase 6:**
+1. Simulate primary-region unavailability in staging.
+2. Confirm edge routing drains traffic to the fallback region.
+3. Confirm fallback API and worker stack continue with regional dependencies only.
+4. Restore primary and validate controlled failback without route flapping.
 
 ---
 
@@ -425,3 +454,35 @@ psql -U $POSTGRES_USER -c "SELECT count(*) FROM pg_stat_activity;"
 4. Reduce `pool_size` + `max_overflow` if running many API replicas (total = replicas × pool_size)
 5. Check for connection leaks: sessions not being closed after errors
 6. Long-term: Deploy pgBouncer in transaction mode to pool connections across replicas
+
+---
+
+### IR-9: Observability Blind Spot
+
+**Symptoms:** `/metrics` stops exposing scrape metrics, logs lack `traceId` / `correlationId`, or incidents cannot be correlated end-to-end.
+
+**Detection:**
+```bash
+# Metrics endpoint should stay reachable and include scrape-specific gauges/counters
+curl -s http://127.0.0.1:8010/metrics | grep -E "scrape_queue_depth|scrape_worker_active|scrape_retries_total|scrape_cache_requests_total"
+
+# Request correlation headers should echo back
+curl -i http://127.0.0.1:8010/health -H "X-Request-ID: debug-trace-1" -H "X-Correlation-ID: incident-42"
+
+# Logs should be JSON and redact secrets
+kubectl logs -n nanovia deploy/nanovia-api --tail=100 | grep '"traceId"'
+```
+
+**Recommended alerts to keep enabled:**
+1. `APIHighErrorRate`
+2. `ScrapeQueueDepthHigh`
+3. `ScrapeWorkerUnavailable`
+4. `ScrapeRetryRateHigh`
+5. `ScrapeCacheHitRatioLow`
+
+**Remediation:**
+1. Confirm `prometheus-fastapi-instrumentator` is still installed in the API image and `/metrics` is not blocked by ingress or middleware.
+2. Confirm the worker heartbeat is updating in Redis by checking `scrape:workers` and `scrape:worker:<worker_id>` keys.
+3. If `scrape_worker_active` is `0`, restart the worker deployment and confirm fresh heartbeats appear before restoring traffic assumptions.
+4. If logs lost correlation IDs, verify upstream proxy still forwards `X-Request-ID` / `X-Correlation-ID` or let the API generate them.
+5. If logs show secrets, inspect recent logger changes touching dict payloads, auth headers, or exception formatting, then roll back the offending deploy.

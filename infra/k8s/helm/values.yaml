@@ -61,6 +61,10 @@ worker:
     repository: ghcr.io/trudelinc2895/kt-monetization-os/api
     tag: latest
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    maxUnavailable: 0
+    maxSurge: 1
   resources:
     requests:
       cpu: "1000m"
@@ -130,10 +134,17 @@ autoscaling:
     minReplicas: 1
     maxReplicas: 8
     cpuUtilization: 60
+    memoryUtilization: 75
+    queueDepthMetric:
+      enabled: false
+      name: scrape_queue_depth
+      averageValue: "5"
 
 podDisruptionBudget:
   enabled: true
   api:
+    minAvailable: 1
+  worker:
     minAvailable: 1
 
 monitoring:

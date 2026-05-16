@@ -22,6 +22,7 @@ _local_circuit: dict[str, dict[str, float]] = {}
 _local_jobs: dict[str, dict[str, str]] = {}
 _local_job_dedupe: dict[str, _LocalValue] = {}
 _local_queue: deque[str] = deque()
+_local_worker_heartbeats: dict[str, tuple[float, dict[str, str]]] = {}
 
 _redis_pool: aioredis.Redis | None = None
 
@@ -29,8 +30,22 @@ _redis_pool: aioredis.Redis | None = None
 async def get_redis() -> aioredis.Redis:
     global _redis_pool
     if _redis_pool is None:
-        _redis_pool = aioredis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
+        _redis_pool = aioredis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=5,
+        )
     return _redis_pool
+
+
+async def close_redis() -> None:
+    global _redis_pool
+    if _redis_pool is None:
+        return
+    await _redis_pool.aclose()
+    _redis_pool = None
 
 
 def _now() -> float:
@@ -49,6 +64,13 @@ def _prune_local_job_dedupe() -> None:
     stale = [key for key, val in _local_job_dedupe.items() if val.expires_at <= now]
     for key in stale:
         _local_job_dedupe.pop(key, None)
+
+
+def _prune_local_worker_heartbeats() -> None:
+    now = _now()
+    stale = [worker_id for worker_id, (expires_at, _) in _local_worker_heartbeats.items() if expires_at <= now]
+    for worker_id in stale:
+        _local_worker_heartbeats.pop(worker_id, None)
 
 
 async def cache_get(key: str) -> str | None:
@@ -127,6 +149,16 @@ async def decr_with_floor(key: str) -> int:
         else:
             _local_cache[key] = _LocalValue(expires_at=item.expires_at, value=str(count))
         return count
+
+
+async def delete_key(key: str) -> None:
+    try:
+        redis = await get_redis()
+        await redis.delete(key)
+    except Exception:
+        _local_cache.pop(key, None)
+        _local_locks.pop(key, None)
+        _local_job_dedupe.pop(key, None)
 
 
 async def circuit_get(domain: str) -> dict[str, int]:
@@ -246,6 +278,50 @@ async def clear_dedupe_job(url_hash: str, job_id: str | None = None) -> None:
         if job_id is not None and current.value != job_id:
             return
         _local_job_dedupe.pop(key, None)
+
+
+async def set_worker_heartbeat(worker_id: str, payload: dict[str, str], ttl: int) -> None:
+    key = f"scrape:worker:{worker_id}"
+    registry_key = "scrape:workers"
+    try:
+        redis = await get_redis()
+        await redis.hset(key, mapping=payload)
+        await redis.expire(key, ttl)
+        await redis.sadd(registry_key, worker_id)
+    except Exception:
+        _local_worker_heartbeats[worker_id] = (_now() + ttl, dict(payload))
+
+
+async def clear_worker_heartbeat(worker_id: str) -> None:
+    key = f"scrape:worker:{worker_id}"
+    registry_key = "scrape:workers"
+    try:
+        redis = await get_redis()
+        await redis.delete(key)
+        await redis.srem(registry_key, worker_id)
+    except Exception:
+        _local_worker_heartbeats.pop(worker_id, None)
+
+
+async def get_worker_heartbeats() -> list[dict[str, str]]:
+    registry_key = "scrape:workers"
+    try:
+        redis = await get_redis()
+        worker_ids = sorted(await redis.smembers(registry_key))
+        heartbeats: list[dict[str, str]] = []
+        stale_ids: list[str] = []
+        for worker_id in worker_ids:
+            payload = await redis.hgetall(f"scrape:worker:{worker_id}")
+            if payload:
+                heartbeats.append(payload)
+            else:
+                stale_ids.append(worker_id)
+        if stale_ids:
+            await redis.srem(registry_key, *stale_ids)
+        return heartbeats
+    except Exception:
+        _prune_local_worker_heartbeats()
+        return [payload for _, payload in _local_worker_heartbeats.values()]
 
 
 def dumps_json(value: dict) -> str:

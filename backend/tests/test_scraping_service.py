@@ -122,6 +122,17 @@ def test_build_stealth_headers_with_explicit_profile():
     assert headers["Accept-Language"] == "fr-FR,fr;q=0.9"
 
 
+def test_get_stealth_profile_is_stable_for_seed():
+    """Same seed should resolve to the same stealth profile."""
+    from api.scraping.stealth.headers import get_stealth_profile
+
+    left = get_stealth_profile(seed="example.com")
+    right = get_stealth_profile(seed="example.com")
+
+    assert left["name"] == right["name"]
+    assert left["ua"] == right["ua"]
+
+
 # ── stealth/behavior.py ───────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

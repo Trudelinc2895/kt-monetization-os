@@ -77,6 +77,38 @@ groups:
           summary: "API error rate > 5%"
           description: "Error rate: {{ $value | humanizePercentage }}"
 
+      - alert: ScrapeWorkerUnavailable
+        expr: scrape_worker_active < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No active scrape worker heartbeat"
+          description: "The API metrics endpoint does not see any active scrape worker heartbeat for 5 minutes."
+
+      - alert: ScrapeRetryRateHigh
+        expr: sum(rate(scrape_retries_total[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scrape retry rate is elevated"
+          description: "Scrape retries are occurring at more than 1 retry/sec over the last 10 minutes."
+
+      - alert: ScrapeCacheHitRatioLow
+        expr: |
+          (
+            sum(rate(scrape_cache_requests_total{result="hit"}[15m]))
+            /
+            clamp_min(sum(rate(scrape_cache_requests_total{result=~"hit|miss"}[15m])), 1)
+          ) < 0.20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scrape cache hit ratio is low"
+          description: "Scrape cache hit ratio stayed below 20% for the last 15 minutes."
+
   - name: kt_database
     interval: 30s
     rules:

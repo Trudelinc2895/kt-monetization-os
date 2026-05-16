@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import socket
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from fastapi import HTTPException
 
@@ -11,6 +11,80 @@ from api.config import settings
 
 
 _BLOCKED_HOSTS = {"localhost", "localhost.localdomain"}
+_BLOCKED_METADATA_HOSTS = {
+    "metadata",
+    "metadata.google.internal",
+}
+_BLOCKED_METADATA_IPS = {
+    ipaddress.ip_address("100.100.100.200"),  # Alibaba metadata service
+    ipaddress.ip_address("168.63.129.16"),    # Azure WireServer
+    ipaddress.ip_address("169.254.169.254"),  # AWS/Azure/GCP metadata service
+}
+_BLOCKED_PORTS = frozenset(
+    {
+        21,
+        22,
+        23,
+        25,
+        53,
+        111,
+        135,
+        137,
+        138,
+        139,
+        389,
+        445,
+        1433,
+        1521,
+        2049,
+        2375,
+        2376,
+        3306,
+        3389,
+        4369,
+        5432,
+        5672,
+        5985,
+        5986,
+        6379,
+        9200,
+        9300,
+        11211,
+        27017,
+    }
+)
+
+
+def _format_netloc(scheme: str, hostname: str, port: int | None) -> str:
+    host = hostname.lower().rstrip(".")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+        return f"{host}:{port}"
+    return host
+
+
+def _normalize_host(hostname: str) -> str:
+    return hostname.lower().rstrip(".")
+
+
+def _validate_host_policy(hostname: str) -> None:
+    host = _normalize_host(hostname)
+    if host in _BLOCKED_HOSTS or host in _BLOCKED_METADATA_HOSTS:
+        raise HTTPException(status_code=403, detail="Host blocked")
+
+
+def _validate_port(scheme: str, port: int | None) -> None:
+    if port is None:
+        return
+    if port <= 0 or port > 65535:
+        raise HTTPException(status_code=400, detail="URL port is invalid")
+    if port in _BLOCKED_PORTS:
+        raise HTTPException(status_code=403, detail="URL port blocked by SSRF policy")
+    if scheme == "http" and port == 443:
+        raise HTTPException(status_code=400, detail="URL port is invalid for http")
+    if scheme == "https" and port == 80:
+        raise HTTPException(status_code=400, detail="URL port is invalid for https")
 
 
 def normalize_url(raw_url: str) -> str:
@@ -24,28 +98,45 @@ def normalize_url(raw_url: str) -> str:
     if parsed.username or parsed.password:
         raise HTTPException(status_code=400, detail="URL credentials are not allowed")
 
-    host = parsed.hostname.lower().rstrip(".")
-    if host in _BLOCKED_HOSTS:
-        raise HTTPException(status_code=403, detail="Host blocked")
-
-    port = parsed.port
-    netloc = host
-    if port and not ((parsed.scheme == "http" and port == 80) or (parsed.scheme == "https" and port == 443)):
-        netloc = f"{host}:{port}"
+    host = _normalize_host(parsed.hostname)
+    _validate_host_policy(host)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="URL port is invalid") from exc
+    _validate_port(parsed.scheme, port)
 
     path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/") or "/"
-    query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=True)), doseq=True)
-    return urlunsplit((parsed.scheme, netloc, path, query, ""))
+    netloc = _format_netloc(parsed.scheme, host, port)
+    return urlunsplit((parsed.scheme, netloc, path, parsed.query, ""))
 
 
 def normalized_hash(normalized_url: str) -> str:
     return hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
 
 
+def redact_url_for_logs(raw_url: str) -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return ""
+
+    try:
+        parsed = urlsplit(value)
+    except Exception:
+        return "<invalid-url>"
+
+    if not parsed.scheme or not parsed.hostname:
+        return "<invalid-url>"
+
+    netloc = _format_netloc(parsed.scheme, parsed.hostname, parsed.port)
+    path = parsed.path or "/"
+    return urlunsplit((parsed.scheme, netloc, path, "", ""))
+
+
 def _is_blocked_ip(ip_str: str) -> bool:
     ip_obj = ipaddress.ip_address(ip_str)
+    if ip_obj in _BLOCKED_METADATA_IPS:
+        return True
     return any(
         (
             ip_obj.is_private,
@@ -58,9 +149,27 @@ def _is_blocked_ip(ip_str: str) -> bool:
     )
 
 
+def resolve_dns_records(hostname: str) -> set[str]:
+    records: set[str] = set()
+
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            infos = socket.getaddrinfo(hostname, None, family, socket.SOCK_STREAM)
+        except socket.gaierror:
+            continue
+        for info in infos:
+            ip_str = info[4][0]
+            if ip_str:
+                records.add(ip_str)
+
+    if not records:
+        raise HTTPException(status_code=400, detail="Host resolution failed")
+    return records
+
+
 def validate_allowlist(hostname: str) -> None:
     allowlist = settings.SCRAPING_ALLOWLIST
-    host = hostname.lower().rstrip(".")
+    host = _normalize_host(hostname)
 
     if settings.SCRAPING_STRICT_ALLOWLIST and not allowlist:
         raise HTTPException(status_code=503, detail="Scraping allowlist is not configured")
@@ -72,17 +181,9 @@ def validate_allowlist(hostname: str) -> None:
 
 
 def validate_dns_and_ip(hostname: str) -> None:
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
-        raise HTTPException(status_code=400, detail="Host resolution failed") from exc
-
-    seen: set[str] = set()
-    for info in infos:
-        ip_str = info[4][0]
-        if ip_str in seen:
-            continue
-        seen.add(ip_str)
+    seen = resolve_dns_records(hostname)
+    seen |= resolve_dns_records(hostname)
+    for ip_str in seen:
         if _is_blocked_ip(ip_str):
             raise HTTPException(status_code=403, detail="Resolved IP blocked by SSRF policy")
 
@@ -92,6 +193,7 @@ def validate_safe_url(raw_url: str) -> str:
     host = urlsplit(normalized).hostname
     if not host:
         raise HTTPException(status_code=400, detail="Invalid host")
+    _validate_host_policy(host)
     validate_allowlist(host)
     validate_dns_and_ip(host)
     return normalized

@@ -53,9 +53,21 @@ async def _get_redis() -> aioredis.Redis:
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = aioredis.from_url(
-            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=5,
         )
     return _redis_pool
+
+
+async def close_redis() -> None:
+    global _redis_pool
+    if _redis_pool is None:
+        return
+    await _redis_pool.aclose()
+    _redis_pool = None
 
 
 def _month_key(user_id: uuid.UUID) -> str:

@@ -47,7 +47,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: nanovia-secrets
-                  key: REDIS_PASSWORD
+                  key: POSTGRES_PASSWORD
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data

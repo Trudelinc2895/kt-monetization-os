@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -11,7 +12,7 @@ from fastapi import HTTPException
 
 from api.config import settings
 from api.scraping.fetcher_http import fetch_http
-from api.scraping.security import validate_safe_url
+from api.scraping.security import validate_redirect, validate_safe_url
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,12 @@ _BOT_DETECTION_KEYWORDS = (
     "ddos-guard",
     "just a moment",
 )
+
+
+def _validate_browser_request_target(previous_url: str, target_url: str, *, initial: bool) -> str:
+    if initial:
+        return validate_safe_url(target_url)
+    return validate_redirect(previous_url, target_url)
 
 
 def check_content_safety(html: str, url: str) -> bool:
@@ -62,15 +69,15 @@ class BrowserPool:
         try:
             if self._browser is not None:
                 await self._browser.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[fetcher_browser] browser close failed: %s", exc)
         finally:
             self._browser = None
         try:
             if self._pw is not None:
                 await self._pw.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[fetcher_browser] playwright stop failed: %s", exc)
         finally:
             self._pw = None
 
@@ -107,10 +114,10 @@ class BrowserPool:
         await self._close_browser()
 
     @asynccontextmanager
-    async def page(self) -> AsyncIterator:
+    async def page(self, *, context_options: dict[str, object] | None = None) -> AsyncIterator:
         async with self._sem:
             browser = await self._ensure_browser()
-            context = await asyncio.wait_for(browser.new_context(), timeout=30)
+            context = await asyncio.wait_for(browser.new_context(**(context_options or {})), timeout=30)
             page = await asyncio.wait_for(context.new_page(), timeout=15)
             self._last_used = time.monotonic()
             try:
@@ -119,12 +126,12 @@ class BrowserPool:
                 self._last_used = time.monotonic()
                 try:
                     await page.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[fetcher_browser] page close failed: %s", exc)
                 try:
                     await context.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[fetcher_browser] browser context close failed: %s", exc)
 
 
 _browser_pool = BrowserPool(settings.SCRAPING_BROWSER_POOL_SIZE)
@@ -135,6 +142,7 @@ async def fetch_browser(
     *,
     proxy: str | None,
     request_headers: dict[str, str],
+    stealth_profile: dict[str, object] | None = None,
 ) -> tuple[int, str, str, str, int, bool]:
     if proxy:
         logger.warning("playwright_proxy_fallback_http")
@@ -145,26 +153,97 @@ async def fetch_browser(
         )
         return status_code, content_type, body, "http", redirect_count, used_proxy
 
-    async with _browser_pool.page() as page:
+    context_options: dict[str, object] = {}
+    if stealth_profile is not None:
+        context_options = {
+            "user_agent": str(stealth_profile.get("ua", request_headers.get("User-Agent", settings.SCRAPING_USER_AGENT))),
+            "locale": str(stealth_profile.get("locale", "en-US")),
+            "timezone_id": settings.SCRAPING_STEALTH_TIMEZONE,
+            "viewport": {
+                "width": settings.SCRAPING_STEALTH_VIEWPORT_WIDTH,
+                "height": settings.SCRAPING_STEALTH_VIEWPORT_HEIGHT,
+            },
+        }
+
+    async with _browser_pool.page(context_options=context_options) as page:
+        blocked_navigation: HTTPException | None = None
+        allowed_url = normalized_url
+        redirect_count = 0
+        initial_navigation_pending = True
+
+        async def _guard_navigation(route) -> None:
+            nonlocal blocked_navigation, allowed_url, redirect_count, initial_navigation_pending
+
+            request = route.request
+            is_navigation_request = False
+            request_nav = getattr(request, "is_navigation_request", None)
+            if callable(request_nav):
+                is_navigation_request = bool(request_nav())
+            elif isinstance(request_nav, bool):
+                is_navigation_request = request_nav
+
+            request_frame = getattr(request, "frame", None)
+            if is_navigation_request and request_frame == getattr(page, "main_frame", None):
+                try:
+                    validated_target = _validate_browser_request_target(
+                        allowed_url,
+                        request.url,
+                        initial=initial_navigation_pending,
+                    )
+                except HTTPException as exc:
+                    blocked_navigation = exc
+                    await route.abort("blockedbyclient")
+                    return
+
+                if not initial_navigation_pending and validated_target != allowed_url:
+                    redirect_count += 1
+                allowed_url = validated_target
+                initial_navigation_pending = False
+
+            await route.continue_()
+
+        await page.route("**/*", _guard_navigation)
+        if request_headers:
+            await page.set_extra_http_headers(request_headers)
+
         if settings.SCRAPING_STEALTH_MODE:
             from api.scraping.stealth.fingerprint import apply_stealth_patches
+            from api.scraping.stealth.behavior import wait_for_content
 
-            await apply_stealth_patches(page)
+            await apply_stealth_patches(page, stealth_profile)
 
-        response = await page.goto(
-            normalized_url,
-            wait_until="domcontentloaded",
-            timeout=int(settings.SCRAPING_TIMEOUT_SECONDS * 1000),
-        )
+        try:
+            response = await page.goto(
+                normalized_url,
+                wait_until="domcontentloaded",
+                timeout=int(settings.SCRAPING_TIMEOUT_SECONDS * 1000),
+            )
+        except Exception:
+            if blocked_navigation is not None:
+                raise blocked_navigation
+            raise
+        finally:
+            unroute_result = page.unroute("**/*", _guard_navigation)
+            if inspect.isawaitable(unroute_result):
+                await unroute_result
+
+        if blocked_navigation is not None:
+            raise blocked_navigation
+
         final_url = page.url
         safe_final = validate_safe_url(final_url)
-        if urlsplit(safe_final).hostname != urlsplit(final_url).hostname:
+        if urlsplit(safe_final).hostname != urlsplit(allowed_url).hostname:
             raise HTTPException(status_code=403, detail="Redirect target blocked")
 
         if settings.SCRAPING_STEALTH_MODE and settings.SCRAPING_STEALTH_SCROLL_SIMULATE:
             from api.scraping.stealth.behavior import simulate_scroll
 
             await simulate_scroll(page)
+            await wait_for_content(page)
+        elif settings.SCRAPING_STEALTH_MODE:
+            from api.scraping.stealth.behavior import wait_for_content
+
+            await wait_for_content(page)
 
         html = await page.content()
         if not check_content_safety(html, normalized_url):
@@ -175,6 +254,5 @@ async def fetch_browser(
             raise HTTPException(status_code=413, detail="Response too large")
 
         status_code = 200 if response is None else response.status
-        redirect_count = 0 if final_url == normalized_url else 1
         return status_code, "text/html", html, "playwright", redirect_count, False
 

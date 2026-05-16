@@ -4,13 +4,14 @@ import asyncio
 import logging
 import signal
 import time
+import uuid
 from collections import defaultdict
 from urllib.parse import urlsplit
 
 from api.scraping.feature_flags import async_queue_enabled
 from api.scraping.fetcher_browser import _browser_pool
 from api.scraping.service import process_job
-from api.scraping.store import dequeue_job
+from api.scraping.store import clear_worker_heartbeat, dequeue_job, set_worker_heartbeat
 from api.config import settings
 
 logger = logging.getLogger(__name__)
@@ -67,9 +68,12 @@ async def _get_job_domain(job_id: str) -> str | None:
     """Retrieve the target URL domain from job state."""
     try:
         from api.scraping.store import get_job_state
+        from api.scraping.models import ScrapeRequest
+
         raw = await get_job_state(job_id)
-        if raw and raw.get("url"):
-            return urlsplit(raw["url"]).hostname or None
+        if raw and raw.get("request"):
+            req = ScrapeRequest.model_validate_json(raw["request"])
+            return urlsplit(raw.get("normalized_url") or req.url).hostname or None
     except Exception:
         pass
     return None
@@ -92,93 +96,132 @@ async def run_worker_forever(
     stop_event: asyncio.Event | None = None,
 ) -> None:
     """Process scrape jobs from the queue until *stop_event* is set."""
-    logger.info("scrape_worker_started")
+    worker_id = f"{settings.APP_REGION}-{uuid.uuid4().hex[:8]}"
+    worker_status = "starting"
+    next_heartbeat_at = 0.0
+
+    async def _heartbeat(status: str) -> None:
+        await set_worker_heartbeat(
+            worker_id,
+            {
+                "worker_id": worker_id,
+                "region": settings.APP_REGION,
+                "status": status,
+                "updated_at": str(int(time.time())),
+            },
+            settings.SCRAPING_WORKER_HEARTBEAT_TTL_SECONDS,
+        )
+
+    _browser_pool.start_zombie_killer()
+    await _heartbeat(worker_status)
+    logger.info({"event": "scrape_worker_started", "worker_id": worker_id, "region": settings.APP_REGION})
     _memory_baseline = await _get_process_memory_mb()
 
-    while True:
-        domain: str | None = None
-        if stop_event is not None and stop_event.is_set():
-            logger.info("scrape_worker_stop_event_received — shutting down")
-            break
-        if not async_queue_enabled():
-            await asyncio.sleep(1)
-            continue
-        try:
-            job_id = await dequeue_job(timeout_seconds=poll_timeout_seconds)
-            if not job_id:
+    try:
+        while True:
+            domain: str | None = None
+            if time.monotonic() >= next_heartbeat_at:
+                await _heartbeat(worker_status)
+                next_heartbeat_at = time.monotonic() + settings.SCRAPING_WORKER_HEARTBEAT_INTERVAL_SECONDS
+
+            if stop_event is not None and stop_event.is_set():
+                worker_status = "stopping"
+                await _heartbeat(worker_status)
+                logger.info({"event": "scrape_worker_stop_event_received", "worker_id": worker_id})
+                break
+
+            if not async_queue_enabled():
+                worker_status = "disabled"
+                await _heartbeat(worker_status)
+                await asyncio.sleep(1)
                 continue
 
-            # Resolve domain for circuit breaker
-            domain = await _get_job_domain(job_id)
-            if domain and _is_domain_blocked(domain):
-                logger.warning(
-                    "circuit_breaker_skip job_id=%s domain=%s",
-                    job_id,
-                    domain,
-                )
-                # Mark job as skipped/failed
-                from api.scraping.store import get_job_state, set_job_state
-                raw = await get_job_state(job_id)
-                if raw:
-                    await set_job_state(
-                        job_id,
-                        {**raw, "status": "failed", "error": "circuit_breaker_open"},
-                        settings.SCRAPING_JOB_TTL_SECONDS,
-                    )
-                continue
-
-            # Per-job timeout: 2× SCRAPING_TIMEOUT_SECONDS + 30 s overhead
-            job_deadline = settings.SCRAPING_TIMEOUT_SECONDS * 2 + 30
-            mem_before = await _get_process_memory_mb()
+            worker_status = "idle"
             try:
-                async with asyncio.timeout(job_deadline):
-                    await process_job(job_id)
-                if domain:
-                    _record_domain_success(domain)
-            except TimeoutError:
-                logger.error(
-                    "scrape_worker_job_timeout job_id=%s deadline=%.1fs",
-                    job_id,
-                    job_deadline,
-                )
+                job_id = await dequeue_job(timeout_seconds=poll_timeout_seconds)
+                if not job_id:
+                    continue
+
+                worker_status = "processing"
+                await _heartbeat(worker_status)
+
+                # Resolve domain for circuit breaker
+                domain = await _get_job_domain(job_id)
+                if domain and _is_domain_blocked(domain):
+                    logger.warning(
+                        "circuit_breaker_skip job_id=%s domain=%s",
+                        job_id,
+                        domain,
+                    )
+                    # Mark job as skipped/failed
+                    from api.scraping.store import get_job_state, set_job_state
+                    raw = await get_job_state(job_id)
+                    if raw:
+                        await set_job_state(
+                            job_id,
+                            {**raw, "status": "failed", "error": "circuit_breaker_open"},
+                            settings.SCRAPING_JOB_TTL_SECONDS,
+                        )
+                    continue
+
+                # Per-job timeout: 2× SCRAPING_TIMEOUT_SECONDS + 30 s overhead
+                job_deadline = settings.SCRAPING_TIMEOUT_SECONDS * 2 + 30
+                mem_before = await _get_process_memory_mb()
+                try:
+                    async with asyncio.timeout(job_deadline):
+                        await process_job(job_id)
+                    if domain:
+                        _record_domain_success(domain)
+                except TimeoutError:
+                    logger.error(
+                        "scrape_worker_job_timeout job_id=%s deadline=%.1fs",
+                        job_id,
+                        job_deadline,
+                    )
+                    if domain:
+                        _record_domain_failure(domain)
+                    from api.scraping.store import get_job_state, set_job_state
+                    import time as _time
+                    raw = await get_job_state(job_id)
+                    if raw:
+                        await set_job_state(
+                            job_id,
+                            {
+                                **raw,
+                                "status": "failed",
+                                "updated_at": str(int(_time.time())),
+                                "error": "worker_timeout",
+                            },
+                            settings.SCRAPING_JOB_TTL_SECONDS,
+                        )
+
+                # Memory budget check: warn if job spiked > 200 MB over baseline
+                mem_after = await _get_process_memory_mb()
+                mem_delta = mem_after - mem_before
+                if mem_delta > 200:
+                    logger.warning(
+                        "worker_memory_spike job_id=%s delta_mb=%.1f — closing browser",
+                        job_id,
+                        mem_delta,
+                    )
+                    try:
+                        await _browser_pool._close_browser()
+                    except Exception as exc:
+                        logger.warning("worker_memory_spike browser_close_error: %s", exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("scrape_worker_iteration_failed")
                 if domain:
                     _record_domain_failure(domain)
-                from api.scraping.store import get_job_state, set_job_state
-                import time as _time
-                raw = await get_job_state(job_id)
-                if raw:
-                    await set_job_state(
-                        job_id,
-                        {
-                            **raw,
-                            "status": "failed",
-                            "updated_at": str(int(_time.time())),
-                            "error": "worker_timeout",
-                        },
-                        settings.SCRAPING_JOB_TTL_SECONDS,
-                    )
-
-            # Memory budget check: warn if job spiked > 200 MB over baseline
-            mem_after = await _get_process_memory_mb()
-            mem_delta = mem_after - mem_before
-            if mem_delta > 200:
-                logger.warning(
-                    "worker_memory_spike job_id=%s delta_mb=%.1f — closing browser",
-                    job_id,
-                    mem_delta,
-                )
-                try:
-                    await _browser_pool._close_browser()
-                except Exception as exc:
-                    logger.warning("worker_memory_spike browser_close_error: %s", exc)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            logger.exception("scrape_worker_iteration_failed")
-            if domain:
-                _record_domain_failure(domain)
-            await asyncio.sleep(1)
+                worker_status = "error"
+                await _heartbeat(worker_status)
+                await asyncio.sleep(1)
+            finally:
+                if worker_status != "disabled":
+                    worker_status = "idle"
+    finally:
+        await clear_worker_heartbeat(worker_id)
 
 
 def main() -> None:
@@ -197,13 +240,13 @@ def main() -> None:
 
     try:
         signal.signal(signal.SIGTERM, _handle_sigterm)
-    except (OSError, ValueError):
-        pass  # SIGTERM may not be available on Windows
+    except (OSError, ValueError) as exc:
+        logger.debug("scrape_worker_sigterm_handler_unavailable error=%s", exc)
 
     try:
         signal.signal(signal.SIGINT, _handle_sigint)
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        logger.debug("scrape_worker_sigint_handler_unavailable error=%s", exc)
 
     try:
         loop.run_until_complete(run_worker_forever(stop_event=stop_event))

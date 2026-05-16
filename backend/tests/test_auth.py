@@ -157,3 +157,43 @@ def test_structured_formatter_merges_dict_msg():
     parsed = json.loads(output)
     assert parsed["event"] == "scrape_completed"
     assert parsed["url"] == "https://example.com"
+
+
+def test_structured_formatter_includes_correlation_id_and_redacts_sensitive_dict_fields():
+    """StructuredFormatter should keep correlation metadata and redact secret-bearing fields."""
+    import json
+    from api.core.logging import (
+        StructuredFormatter,
+        clear_request_context,
+        set_correlation_id,
+        set_request_id,
+    )
+
+    formatter = StructuredFormatter()
+    set_request_id("trace-123")
+    set_correlation_id("corr-456")
+    try:
+        record = logging.LogRecord(
+            name="test.logger",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg={
+                "event": "auth_attempt",
+                "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature",
+                "token": "super-secret-token",
+                "email": "alice@example.com",
+            },
+            args=(),
+            exc_info=None,
+        )
+        output = formatter.format(record)
+    finally:
+        clear_request_context()
+
+    parsed = json.loads(output)
+    assert parsed["traceId"] == "trace-123"
+    assert parsed["correlationId"] == "corr-456"
+    assert parsed["authorization"] == "[REDACTED]"
+    assert parsed["token"] == "[REDACTED]"
+    assert parsed["email"] != "alice@example.com"

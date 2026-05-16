@@ -1,16 +1,21 @@
-"""backend/api/scraping/stealth/fingerprint.py — Playwright stealth patches.
-
-Patches are idempotent — safe to call multiple times on the same page.
-"""
+"""backend/api/scraping/stealth/fingerprint.py — Playwright stealth patches."""
 from __future__ import annotations
 
-_STEALTH_SCRIPT = """
+import json
+
+from api.scraping.stealth.headers import get_stealth_profile
+
+_STEALTH_SCRIPT_TEMPLATE = """
 (function() {
-    // Prevent multiple applications
     if (window.__nanovia_stealth_applied) return;
     window.__nanovia_stealth_applied = true;
 
-    // 1. navigator.webdriver → undefined
+    const languages = {languages};
+    const platform = {platform};
+    const webglVendor = {webgl_vendor};
+    const webglRenderer = {webgl_renderer};
+    const canvasShift = {canvas_shift};
+
     try {
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined,
@@ -18,7 +23,13 @@ _STEALTH_SCRIPT = """
         });
     } catch(e) {}
 
-    // 2. navigator.plugins — simulate 3 real-looking plugins
+    try {
+        Object.defineProperty(navigator, 'platform', {
+            get: () => platform,
+            configurable: true,
+        });
+    } catch(e) {}
+
     try {
         const fakePlugins = [
             { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
@@ -35,15 +46,13 @@ _STEALTH_SCRIPT = """
         });
     } catch(e) {}
 
-    // 3. navigator.languages
     try {
         Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en'],
+            get: () => languages,
             configurable: true,
         });
     } catch(e) {}
 
-    // 4. window.chrome — Chrome runtime object present
     try {
         if (!window.chrome) {
             Object.defineProperty(window, 'chrome', {
@@ -54,7 +63,6 @@ _STEALTH_SCRIPT = """
         }
     } catch(e) {}
 
-    // 5. Permissions API — avoid automation fingerprint
     try {
         const origQuery = window.navigator.permissions && window.navigator.permissions.query.bind(window.navigator.permissions);
         if (origQuery) {
@@ -67,27 +75,24 @@ _STEALTH_SCRIPT = """
         }
     } catch(e) {}
 
-    // 6. WebGL vendor/renderer — coherent with platform
     try {
         const getParam = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function(parameter) {
-            if (parameter === 37445) return 'Intel Inc.';
-            if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+            if (parameter === 37445) return webglVendor;
+            if (parameter === 37446) return webglRenderer;
             return getParam.apply(this, arguments);
         };
     } catch(e) {}
 
-    // 7. Canvas fingerprint — deterministic mild noise per session
     try {
-        const _noise = (Math.random() * 0.01) - 0.005;
         const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
         HTMLCanvasElement.prototype.toDataURL = function(type) {
-            if (type === 'image/png') {
+            if (type === 'image/png' && canvasShift !== 0) {
                 const ctx = this.getContext('2d');
                 if (ctx && this.width > 0 && this.height > 0) {
                     try {
                         const img = ctx.getImageData(0, 0, 1, 1);
-                        img.data[0] = Math.max(0, Math.min(255, img.data[0] + Math.round(_noise * 100)));
+                        img.data[0] = Math.max(0, Math.min(255, img.data[0] + canvasShift));
                         ctx.putImageData(img, 0, 0);
                     } catch(e) {}
                 }
@@ -99,12 +104,16 @@ _STEALTH_SCRIPT = """
 """
 
 
-async def apply_stealth_patches(page) -> None:
-    """Inject stealth JavaScript patches into a Playwright page.
+def render_stealth_script(profile: dict[str, object] | None = None) -> str:
+    p = profile or get_stealth_profile()
+    return _STEALTH_SCRIPT_TEMPLATE.format(
+        languages=json.dumps(p.get("languages", ["en-US", "en"])),
+        platform=json.dumps(str(p.get("platform", "Win32"))),
+        webgl_vendor=json.dumps(str(p.get("webgl_vendor", "Intel Inc."))),
+        webgl_renderer=json.dumps(str(p.get("webgl_renderer", "Intel Iris OpenGL Engine"))),
+        canvas_shift=json.dumps(int(p.get("canvas_shift", 1))),
+    )
 
-    Idempotent — uses a guard flag so multiple calls are safe.
 
-    Args:
-        page: Playwright Page object.
-    """
-    await page.add_init_script(_STEALTH_SCRIPT)
+async def apply_stealth_patches(page, profile: dict[str, object] | None = None) -> None:
+    await page.add_init_script(render_stealth_script(profile))

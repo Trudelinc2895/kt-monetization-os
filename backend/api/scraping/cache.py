@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from api.config import settings
 from api.scraping.models import ScrapeResult
-from api.scraping.store import cache_get, cache_setex, dumps_json, loads_json, setnx_with_ttl
+from api.scraping.store import cache_get, cache_setex, delete_key, dumps_json, loads_json, setnx_with_ttl
 
 
 def cache_key(url_hash: str) -> str:
@@ -30,4 +30,8 @@ async def write_cached_result(url_hash: str, result: ScrapeResult) -> None:
 
 async def acquire_inflight_lock(url_hash: str) -> bool:
     return await setnx_with_ttl(inflight_key(url_hash), settings.SCRAPING_DEDUPE_TTL_SECONDS)
+
+
+async def release_inflight_lock(url_hash: str) -> None:
+    await delete_key(inflight_key(url_hash))
 

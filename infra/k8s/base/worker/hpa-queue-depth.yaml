@@ -1,0 +1,26 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nanovia-worker-queue-depth-hpa
+  namespace: nanovia
+  labels:
+    app.kubernetes.io/name: nanovia-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    nanovia.io/optional: "Enable only when a custom metrics adapter exposes scrape_queue_depth"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nanovia-worker
+  minReplicas: 1
+  maxReplicas: 8
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: scrape_queue_depth
+        target:
+          type: AverageValue
+          averageValue: "5"

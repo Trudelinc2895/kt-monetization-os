@@ -212,7 +212,14 @@ class Settings(BaseSettings):
     SCRAPING_STEALTH_MODE: bool = False
     SCRAPING_STEALTH_SCROLL_SIMULATE: bool = True
     SCRAPING_STEALTH_HEADER_ROTATION: bool = True
+    SCRAPING_STEALTH_PROFILE: str = "chrome-windows"
+    SCRAPING_STEALTH_TIMEZONE: str = "UTC"
+    SCRAPING_STEALTH_VIEWPORT_WIDTH: int = Field(default=1366, ge=800, le=3840)
+    SCRAPING_STEALTH_VIEWPORT_HEIGHT: int = Field(default=768, ge=600, le=2160)
     SCRAPING_PROXY_HEALTH_CHECK_INTERVAL_SECONDS: int = 300
+    SCRAPING_PROXY_HEALTH_CHECK_URL: str = "https://httpbin.org/ip"
+    SCRAPING_WORKER_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=10, ge=1, le=300)
+    SCRAPING_WORKER_HEARTBEAT_TTL_SECONDS: int = Field(default=30, ge=5, le=900)
 
     # URL risk scoring
     SCRAPING_RISK_SCORE_THRESHOLD: float = 0.75

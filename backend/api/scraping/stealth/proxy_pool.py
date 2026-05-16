@@ -14,8 +14,9 @@ class ProxyPool:
 
     _DEAD_TTL_SECONDS: int = 300  # 5 minutes
 
-    def __init__(self, proxy_list: list[str]) -> None:
+    def __init__(self, proxy_list: list[str], *, healthcheck_url: str) -> None:
         self._proxies: list[str] = list(proxy_list)
+        self._healthcheck_url = healthcheck_url
         self._dead: dict[str, float] = {}  # proxy → expiry timestamp
         self._index: int = 0
         self._bg_task: asyncio.Task | None = None
@@ -39,12 +40,12 @@ class ProxyPool:
         self._dead[proxy] = time.time() + self._DEAD_TTL_SECONDS
 
     async def health_check_all(self) -> None:
-        """Check each proxy by GETting httpbin.org/ip.  Resurrect recovered proxies."""
+        """Check each proxy against the configured health endpoint and resurrect recovered proxies."""
         import httpx
         for proxy in list(self._proxies):
             try:
                 async with httpx.AsyncClient(proxy=proxy, timeout=5.0) as client:
-                    resp = await client.get("http://httpbin.org/ip")
+                    resp = await client.get(self._healthcheck_url)
                     if resp.status_code == 200 and proxy in self._dead:
                         del self._dead[proxy]
             except Exception:
@@ -83,7 +84,10 @@ def _get_pool() -> Optional[ProxyPool]:
         from api.config import settings
         proxies = settings.SCRAPING_PROXY_LIST
         if proxies:
-            _pool_instance = ProxyPool(proxies)
+            _pool_instance = ProxyPool(
+                proxies,
+                healthcheck_url=settings.SCRAPING_PROXY_HEALTH_CHECK_URL,
+            )
     return _pool_instance
 
 

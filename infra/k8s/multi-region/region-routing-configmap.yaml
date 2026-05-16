@@ -13,17 +13,47 @@ data:
       - name: eu-west-1
         role: primary
         endpoint: api.nanovia.ca
-        weight: 100
+        routing_weight: 100
+        write_region: true
+        local_redis_required: true
+        blast_radius_group: eu
       - name: us-east-1
-        role: secondary
+        role: fallback
         endpoint: api-us.nanovia.ca
-        weight: 0
+        routing_weight: 0
+        write_region: false
+        local_redis_required: true
+        blast_radius_group: us
     routing:
-      strategy: latency-based
-      dns_ttl: 60
-      health_check_interval: 10s
+      strategy: latency-based-with-primary-preference
+      provider_options:
+        - cloudflare-load-balancer
+        - route53-latency-routing
+      dns_ttl_seconds: 60
+      health_check_path: /api/v1/health/ready
+      health_check_interval_seconds: 10
+      health_check_timeout_seconds: 5
     failover:
       mode: automatic
       threshold_error_rate: 0.10
       threshold_latency_p99_ms: 2000
       cooldown_seconds: 300
+      fallback_region: us-east-1
+      failback_policy: manual-after-cooldown-or-validated-stability
+    dependency_policy:
+      postgres:
+        strategy: primary-writer-with-read-replica
+        single_write_region: eu-west-1
+      redis:
+        strategy: regional-cache-and-queue
+        cross_region_replication: optional-cache-warmup-only
+        global_redis_dependency_allowed: false
+      scraping_workers:
+        strategy: regional-execution-only
+    timeout_policy:
+      edge_healthcheck_seconds: 5
+      cross_region_request_seconds: 5
+      retry_policy: fail_fast_no_deep_cross_region_retry_chain
+    phase6_validation:
+      conceptual_failover_test_required: true
+      staging_drill_required_before_prod: true

@@ -21,7 +21,15 @@ engine = create_async_engine(
     **(
         {"poolclass": NullPool}
         if _is_sqlite
-        else {"pool_size": 10, "max_overflow": 20, "pool_pre_ping": True}
+        else {
+            "pool_size": 10,
+            "max_overflow": 20,
+            "pool_pre_ping": True,
+            "connect_args": {
+                "connect_timeout": 5,
+                "options": "-c statement_timeout=30000",
+            },
+        }
     ),
 )
 

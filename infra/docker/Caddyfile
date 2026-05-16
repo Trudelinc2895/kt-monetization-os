@@ -67,7 +67,5 @@
     }
 }
 
-# ── Raw IP behavior ────────────────────────────────────────────────────────────
-http://{$PUBLIC_IP} {
-    redir https://{$DOMAIN}{uri} permanent
-}
+# Raw-IP bootstrap lives in Caddyfile.ip. The domain Caddyfile must stay valid
+# even when PUBLIC_IP is unset so deploy tooling can validate it safely.

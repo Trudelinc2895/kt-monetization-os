@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nanovia-worker-pdb
+  namespace: nanovia
+  labels:
+    app.kubernetes.io/name: nanovia-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  selector:
+    matchLabels:
+      app: nanovia-worker
+  minAvailable: 1

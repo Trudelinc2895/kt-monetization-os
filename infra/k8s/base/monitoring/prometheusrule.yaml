@@ -36,6 +36,41 @@ spec:
             summary: "Scrape queue depth is high"
             description: "The scrape queue depth has exceeded 500 items for more than 10 minutes."
 
+        - alert: ScrapeWorkerUnavailable
+          expr: scrape_worker_active < 1
+          for: 5m
+          labels:
+            severity: critical
+            namespace: nanovia
+          annotations:
+            summary: "No active scrape worker heartbeat detected"
+            description: "The API metrics endpoint has not observed an active scrape worker heartbeat for more than 5 minutes."
+
+        - alert: ScrapeRetryRateHigh
+          expr: sum(rate(scrape_retries_total[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+            namespace: nanovia
+          annotations:
+            summary: "Scrape retry rate is elevated"
+            description: "Scrape retries are occurring at more than 1 retry/sec for the past 10 minutes."
+
+        - alert: ScrapeCacheHitRatioLow
+          expr: |
+            (
+              sum(rate(scrape_cache_requests_total{result="hit"}[15m]))
+              /
+              clamp_min(sum(rate(scrape_cache_requests_total{result=~"hit|miss"}[15m])), 1)
+            ) < 0.20
+          for: 15m
+          labels:
+            severity: warning
+            namespace: nanovia
+          annotations:
+            summary: "Scrape cache hit ratio is low"
+            description: "Scrape cache hit ratio stayed below 20% for the last 15 minutes."
+
         - alert: APIDown
           expr: up{namespace="nanovia", job=~"nanovia-api.*"} == 0
           for: 2m

@@ -41,8 +41,7 @@ async def health():
     }
 
 
-@router.get("/api/v1/health/ready")
-async def readiness():
+async def _build_readiness_payload() -> tuple[bool, dict[str, str]]:
     """
     Readiness probe — checks DB and Redis connectivity.
     Returns 200 only when all dependencies are reachable.
@@ -76,15 +75,41 @@ async def readiness():
         checks["redis"] = f"error: {type(exc).__name__}"
         healthy = False
 
-    status_code = 200 if healthy else 503
+    if settings.SCRAPING_ENABLED and settings.SCRAPING_FEATURE_ASYNC_QUEUE_ENABLED:
+        try:
+            from api.scraping.metrics import sync_runtime_metrics
+            from api.scraping.store import get_worker_heartbeats
+
+            worker_heartbeats = await get_worker_heartbeats()
+            await sync_runtime_metrics()
+            checks["scrape_workers"] = "ok" if worker_heartbeats else "warning: no active workers"
+        except Exception as exc:
+            logger.warning("[health/ready] scrape worker check failed: %s", exc)
+            checks["scrape_workers"] = f"warning: {type(exc).__name__}"
+
+    return healthy, checks
+
+
+async def _readiness_response() -> JSONResponse:
+    healthy, checks = await _build_readiness_payload()
     return JSONResponse(
-        status_code=status_code,
+        status_code=200 if healthy else 503,
         content={
             "status": "ready" if healthy else "degraded",
             "checks": checks,
             "ts": datetime.now(timezone.utc).isoformat(),
         },
     )
+
+
+@router.get("/ready")
+async def ready():
+    return await _readiness_response()
+
+
+@router.get("/api/v1/health/ready")
+async def readiness():
+    return await _readiness_response()
 
 
 @router.get("/api/v1/health/public-entrypoint")

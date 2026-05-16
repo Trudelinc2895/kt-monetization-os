@@ -19,7 +19,7 @@ WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends libpq5 \
+    && apt-get install -y --no-install-recommends libpq5 procps \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system appuser \
     && adduser --system --ingroup appuser appuser

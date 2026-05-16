@@ -47,9 +47,18 @@ autoscaling:
     minReplicas: 2
     maxReplicas: 10
     cpuUtilization: 60
+    memoryUtilization: 75
+    queueDepthMetric:
+      enabled: false
+      name: scrape_queue_depth
+      averageValue: "5"
 
 podDisruptionBudget:
   enabled: true
+  api:
+    minAvailable: 1
+  worker:
+    minAvailable: 1
 
 monitoring:
   enabled: true

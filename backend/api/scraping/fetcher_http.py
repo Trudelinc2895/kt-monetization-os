@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
 from fastapi import HTTPException
 
 from api.config import settings
 from api.scraping.security import validate_redirect
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_content_type(content_type_header: str) -> str:
@@ -44,8 +48,8 @@ async def fetch_http(
                 try:
                     if int(content_length) > settings.SCRAPING_MAX_RESPONSE_BYTES:
                         raise HTTPException(status_code=413, detail="Response too large")
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("scrape_invalid_content_length_header value=%r error=%s", content_length, exc)
             if len(body_bytes) > settings.SCRAPING_MAX_RESPONSE_BYTES:
                 raise HTTPException(status_code=413, detail="Response too large")
             return response.status_code, content_type, body_bytes.decode("utf-8", errors="replace"), redirect_count, bool(proxy)

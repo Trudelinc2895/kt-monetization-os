@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from urllib.parse import urlsplit
 
 from api.scraping import feature_flags
 from api.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def redact_proxy_for_logs(proxy: str | None) -> str:
+    if not proxy:
+        return ""
+    try:
+        parsed = urlsplit(proxy)
+    except Exception:
+        return "<invalid-proxy>"
+
+    if not parsed.scheme or not parsed.hostname:
+        return "<invalid-proxy>"
+
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
 
 
 def should_bypass_proxy(domain: str) -> bool:
@@ -49,5 +68,5 @@ async def mark_proxy_dead(proxy: str | None) -> None:
 
         await _mark_proxy_dead(proxy)
     except Exception:
-        logger.warning("scraping_proxy_mark_dead_failed", extra={"proxy": proxy})
+        logger.warning("scraping_proxy_mark_dead_failed", extra={"proxy": redact_proxy_for_logs(proxy)})
 

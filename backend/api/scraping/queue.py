@@ -35,11 +35,16 @@ def client_queue_key(client_id: str) -> str:
 
 
 def build_job_id(normalized_url: str, *, render_js: bool) -> str:
+    del normalized_url, render_js
+    return str(uuid.uuid4())
+
+
+def build_request_dedupe_key(normalized_url: str, *, render_js: bool) -> str:
     return normalized_hash(f"{normalized_url}|render_js={int(render_js)}")
 
 
-async def find_active_job(url_hash: str) -> dict[str, str] | None:
-    existing_job_id = await get_dedupe_job(url_hash)
+async def find_active_job(request_dedupe_key: str) -> dict[str, str] | None:
+    existing_job_id = await get_dedupe_job(request_dedupe_key)
     if not existing_job_id:
         return None
     existing = await get_job_state(existing_job_id)
@@ -74,10 +79,15 @@ async def release_client_queue_slot(client_id: str | None) -> None:
     await decr_with_floor(client_queue_key(client_id))
 
 
-async def enqueue_request(req: ScrapeRequest, *, normalized_url: str, url_hash: str) -> ScrapeJobEnqueueResponse:
-    await reserve_client_queue_slot(req.client_id)
-    depth = await ensure_queue_capacity()
+async def enqueue_request(
+    req: ScrapeRequest,
+    *,
+    normalized_url: str,
+    request_dedupe_key: str,
+) -> ScrapeJobEnqueueResponse:
     try:
+        await reserve_client_queue_slot(req.client_id)
+        depth = await ensure_queue_capacity()
         job_id = str(uuid.uuid4()) if req.force_refresh else build_job_id(normalized_url, render_js=req.render_js)
         now = int(time.time())
         state = ScrapeJobState(
@@ -97,12 +107,13 @@ async def enqueue_request(req: ScrapeRequest, *, normalized_url: str, url_hash: 
             "updated_at": str(state.updated_at),
             "attempts": str(state.attempts),
             "normalized_url": state.normalized_url,
+            "render_js": str(int(req.render_js)),
             "request": req.model_dump_json(),
             "result": "",
             "error": "",
         }
         await set_job_state(job_id, payload, settings.SCRAPING_JOB_TTL_SECONDS)
-        await set_dedupe_job(url_hash, job_id, settings.SCRAPING_JOB_TTL_SECONDS)
+        await set_dedupe_job(request_dedupe_key, job_id, settings.SCRAPING_JOB_TTL_SECONDS)
         await enqueue_job(job_id)
         SCRAPE_QUEUE_DEPTH.set(depth + 1)
         return ScrapeJobEnqueueResponse(job_id=job_id, status="queued", queued=True)
@@ -111,6 +122,6 @@ async def enqueue_request(req: ScrapeRequest, *, normalized_url: str, url_hash: 
         raise
 
 
-async def clear_job(url_hash: str, job_id: str | None = None) -> None:
-    await clear_dedupe_job(url_hash, job_id)
+async def clear_job(request_dedupe_key: str, job_id: str | None = None) -> None:
+    await clear_dedupe_job(request_dedupe_key, job_id)
 
