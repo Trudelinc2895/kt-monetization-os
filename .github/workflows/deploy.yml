@@ -13,6 +13,11 @@ on:
         options:
           - staging
           - production
+      git_ref:
+        description: Git ref to deploy (branch, tag, or SHA). Leave empty to use the default env branch.
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
@@ -24,7 +29,7 @@ jobs:
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
     env:
       TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
-      TARGET_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.environment == 'production' && 'main' || 'staging') || github.ref_name }}
+      TARGET_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.git_ref != '' && inputs.git_ref || (inputs.environment == 'production' && 'main' || 'staging')) || github.ref_name }}
       REPO_URL: https://github.com/${{ github.repository }}.git
       APP_DOMAIN: ${{ vars.APP_DOMAIN }}
       PUBLIC_IP: ${{ vars.PUBLIC_IP }}
