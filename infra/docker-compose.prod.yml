@@ -173,7 +173,6 @@ services:
       timeout: 5s
       retries: 5
     networks: [kt-net]
-    cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 100
     logging:
@@ -194,7 +193,6 @@ services:
       timeout: 5s
       retries: 5
     networks: [kt-net]
-    cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 100
     logging:
