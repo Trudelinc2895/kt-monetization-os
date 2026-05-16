@@ -17,7 +17,6 @@ on:
         description: Git ref to deploy (branch, tag, or SHA). Leave empty to use the default env branch.
         required: false
         default: ""
-        type: string
 
 concurrency:
   group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'main' && 'production' || 'staging') }}
