@@ -17,33 +17,45 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table('branding_settings',
-        sa.Column('id', sa.UUID(), nullable=False),
-        sa.Column('workspace_id', sa.String(length=100), nullable=False),
-        sa.Column('company_name', sa.String(length=255), nullable=True),
-        sa.Column('logo_url', sa.Text(), nullable=True),
-        sa.Column('primary_color', sa.String(length=7), nullable=True),
-        sa.Column('accent_color', sa.String(length=7), nullable=True),
-        sa.Column('support_email', sa.String(length=255), nullable=True),
-        sa.Column('custom_domain', sa.String(length=255), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('workspace_id'),
-    )
-    op.create_table('custom_modules',
-        sa.Column('id', sa.UUID(), nullable=False),
-        sa.Column('owner_user_id', sa.UUID(), nullable=False),
-        sa.Column('name', sa.String(length=100), nullable=False),
-        sa.Column('slug', sa.String(length=120), nullable=False),
-        sa.Column('description', sa.Text(), nullable=True),
-        sa.Column('prompt_template', sa.Text(), nullable=False),
-        sa.Column('is_active', sa.Boolean(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(['owner_user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('owner_user_id', 'slug', name='uq_custom_module_owner_slug'),
-    )
-    op.create_index('ix_custom_modules_owner_user_id', 'custom_modules', ['owner_user_id'], unique=False)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    table_names = set(inspector.get_table_names())
+
+    if 'branding_settings' not in table_names:
+        op.create_table('branding_settings',
+            sa.Column('id', sa.UUID(), nullable=False),
+            sa.Column('workspace_id', sa.String(length=100), nullable=False),
+            sa.Column('company_name', sa.String(length=255), nullable=True),
+            sa.Column('logo_url', sa.Text(), nullable=True),
+            sa.Column('primary_color', sa.String(length=7), nullable=True),
+            sa.Column('accent_color', sa.String(length=7), nullable=True),
+            sa.Column('support_email', sa.String(length=255), nullable=True),
+            sa.Column('custom_domain', sa.String(length=255), nullable=True),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('workspace_id'),
+        )
+
+    if 'custom_modules' not in table_names:
+        op.create_table('custom_modules',
+            sa.Column('id', sa.UUID(), nullable=False),
+            sa.Column('owner_user_id', sa.UUID(), nullable=False),
+            sa.Column('name', sa.String(length=100), nullable=False),
+            sa.Column('slug', sa.String(length=120), nullable=False),
+            sa.Column('description', sa.Text(), nullable=True),
+            sa.Column('prompt_template', sa.Text(), nullable=False),
+            sa.Column('is_active', sa.Boolean(), nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(['owner_user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('owner_user_id', 'slug', name='uq_custom_module_owner_slug'),
+        )
+
+    custom_module_indexes = {
+        index["name"] for index in inspector.get_indexes('custom_modules')
+    } if 'custom_modules' in set(inspector.get_table_names()) else set()
+    if 'ix_custom_modules_owner_user_id' not in custom_module_indexes:
+        op.create_index('ix_custom_modules_owner_user_id', 'custom_modules', ['owner_user_id'], unique=False)
 
 
 def downgrade() -> None:
